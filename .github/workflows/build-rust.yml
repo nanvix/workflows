@@ -42,7 +42,7 @@ jobs:
     # Build the mandatory i686 target plus any caller-specified additions using the requested toolchain.
     strategy:
       matrix:
-        target: ${{ fromJson(format('["i686-unknown-nanvix"{0}]', (inputs.additional_targets != '[]' && inputs.additional_targets != '') && format(',{0}', replace(replace(inputs.additional_targets, '[', ''), ']', '')) || '')) }}
+        target: ${{ fromJson(format('["i686-unknown-nanvix"{0}]', (inputs.additional_targets != '[]' && inputs.additional_targets != '') && format(',"{0}"', join(fromJson(inputs.additional_targets), '","')) || '')) }}
     runs-on: [self-hosted]
     steps:
       - name: Checkout Repository
@@ -102,4 +102,4 @@ jobs:
             });
         env:
           FAILURE_ASSIGNEES: ${{ inputs.failure_issue_assignees }}
-          FAILURE_TARGETS: ${{ format('["i686-unknown-nanvix"{0}]', (inputs.additional_targets != '[]' && inputs.additional_targets != '') && format(',{0}', replace(replace(inputs.additional_targets, '[', ''), ']', '')) || '') }}
+          FAILURE_TARGETS: ${{ format('["i686-unknown-nanvix"{0}]', (inputs.additional_targets != '[]' && inputs.additional_targets != '') && format(',"{0}"', join(fromJson(inputs.additional_targets), '","')) || '') }}
