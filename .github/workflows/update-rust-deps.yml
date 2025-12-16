@@ -72,6 +72,11 @@ jobs:
           import tomllib
 
           config_path = pathlib.Path('.cargo/config.toml')
+          if not config_path.exists():
+              print('No .cargo/config.toml found; skipping dependency refresh.')
+              with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as fh:
+                  fh.write('specs=\n')
+              raise SystemExit(0)
           data = tomllib.loads(config_path.read_text(encoding='utf-8'))
           patches = data.get('patch', {}).get('crates-io', {})
           if not patches:
@@ -114,6 +119,7 @@ jobs:
           PY
 
       - name: Update Patched Crates
+        if: ${{ steps.patched-crates.outputs.specs != '' }}
         env:
           PATCHED_SPECS: ${{ steps.patched-crates.outputs.specs }}
         run: |
@@ -124,6 +130,7 @@ jobs:
           done
 
       - name: Open Pull Request
+        if: ${{ steps.patched-crates.outputs.specs != '' }}
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.automation-token }}
