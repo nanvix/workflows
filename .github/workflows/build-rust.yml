@@ -1,0 +1,105 @@
+# Copyright(c) The Maintainers of Nanvix.
+# Licensed under the MIT License.
+
+# This workflows builds a Rust crate for Nanvix.
+
+name: Build Rust
+
+on:
+  workflow_call:
+    inputs:
+      rust_toolchain:
+        description: Rust toolchain channel name (passed to rustup using `+<toolchain>`).
+        required: false
+        default: nanvix-x86
+        type: string
+      additional_targets:
+        description: JSON array with the extra target triples to build in addition to i686-unknown-nanvix.
+        required: false
+        default: '["x86_64-unknown-linux-gnu"]'
+        type: string
+      report_failure:
+        description: Run the failure-reporting job whenever the build fails.
+        required: false
+        default: false
+        type: boolean
+      failure_issue_assignees:
+        description: JSON array listing users that should be assigned to the failure issue.
+        required: false
+        default: '["ppenna"]'
+        type: string
+    secrets:
+      issue_token:
+        description: Personal access token with repo scope for creating issues (falls back to the workflow `GITHUB_TOKEN`).
+        required: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  build:
+    # Build the mandatory i686 target plus any caller-specified additions using the requested toolchain.
+    strategy:
+      matrix:
+        target: ${{ fromJson(format('["i686-unknown-nanvix"{0}]', inputs.additional_targets == '[]' || inputs.additional_targets == '' ? '' : format(',{0}', replace(replace(inputs.additional_targets, '[', ''), ']', '')))) }}
+    runs-on: [self-hosted]
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Cache Cargo Artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            target
+          key: nanvix-ci-${{ runner.os }}-${{ github.ref_name }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            nanvix-ci-${{ runner.os }}-${{ github.ref_name }}-
+            nanvix-ci-${{ runner.os }}-
+
+      - name: Toolchain Diagnostics
+        # Print toolchain versions to help diagnose reproducibility issues.
+        run: |
+          rustc +${{ inputs.rust_toolchain }} -V
+          cargo +${{ inputs.rust_toolchain }} -V
+          rustup show
+
+      - name: Build
+        run: cargo +${{ inputs.rust_toolchain }} build --verbose --target ${{ matrix.target }}
+
+  report-failure:
+    # File an issue whenever the build job fails and reporting is enabled.
+    needs: build
+    if: ${{ always() && inputs.report_failure && needs.build.result == 'failure' }}
+    runs-on: [self-hosted]
+    steps:
+      - name: Create Failure Issue
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.issue_token || github.token }}
+          script: |
+            const assignees = JSON.parse(process.env.FAILURE_ASSIGNEES || '[]');
+            const targets = process.env.FAILURE_TARGETS || '[]';
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const title = `Nanvix reusable build failure (run #${context.runNumber})`;
+            const body = [
+              'Build failed.',
+              '',
+              `- **Workflow**: ${context.workflow}`,
+              `- **Run**: ${runUrl}`,
+              `- **Caller**: ${context.payload.workflow_call?.workflow ?? 'unknown caller'}`,
+              `- **Targets**: ${targets}`,
+              '',
+              'Please investigate the failing targets and take corrective action.'
+            ].join('\n');
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body,
+              assignees,
+            });
+        env:
+          FAILURE_ASSIGNEES: ${{ inputs.failure_issue_assignees }}
+          FAILURE_TARGETS: ${{ format('["i686-unknown-nanvix"{0}]', inputs.additional_targets == '[]' || inputs.additional_targets == '' ? '' : format(',{0}', replace(replace(inputs.additional_targets, '[', ''), ']', ''))) }}
