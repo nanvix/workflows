@@ -28,6 +28,11 @@ on:
         required: false
         default: '["ppenna"]'
         type: string
+      environment_variables:
+        description: JSON object mapping environment variable names to their values for the build job.
+        required: false
+        default: '{}'
+        type: string
     secrets:
       issue_token:
         description: Personal access token with repo scope for creating issues (falls back to the workflow `GITHUB_TOKEN`).
@@ -39,6 +44,7 @@ permissions:
 
 jobs:
   build:
+    env: ${{ fromJson(inputs.environment_variables) }}
     # Build the mandatory i686 target plus any caller-specified additions using the requested toolchain.
     strategy:
       matrix:
