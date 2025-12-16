@@ -16,7 +16,7 @@ on:
       additional_targets:
         description: JSON array with the extra target triples to build in addition to i686-unknown-nanvix.
         required: false
-        default: '["x86_64-unknown-linux-gnu"]'
+        default: '[]'
         type: string
       report_failure:
         description: Run the failure-reporting job whenever the build fails.
