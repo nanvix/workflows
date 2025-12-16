@@ -1,0 +1,226 @@
+# Copyright(c) The Maintainers of Nanvix.
+# Licensed under the MIT License.
+
+# This workflow keeps workflow files named with a configurable prefix in sync
+# across branches that match a target prefix. It does so by copying them from
+# the repository default branch and opening (or refreshing) one pull request per
+# branch that needs updating.
+
+name: Sync Workflows
+
+on:
+  workflow_call:
+    inputs:
+      sync_target_pattern:
+        description: Prefix (relative to repo root) used to select workflow files to mirror
+        type: string
+        default: ".github/workflows/nanvix-"
+      target_branch_prefix:
+        description: Branch name prefix eligible for synchronization
+        type: string
+        default: "nanvix/"
+      assignee:
+        description: GitHub user that should be assigned to opened PRs
+        type: string
+        default: "ppenna"
+    secrets:
+      GH_TOKEN:
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: nanvix-sync-version
+  cancel-in-progress: false
+
+jobs:
+  sync-workflows:
+    name: Synchronize nanvix workflows
+    if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-latest
+    # Inputs come from workflow_call so they can be overridden by the caller.
+    env:
+      SYNC_TARGET_PATTERN: ${{ inputs.sync_target_pattern }}
+      TARGET_BRANCH_PREFIX: ${{ inputs.target_branch_prefix }}
+      ASSIGNEE_TARGET: ${{ inputs.assignee }}
+      REPOSITORY: ${{ github.repository }}
+      REPOSITORY_OWNER: ${{ github.repository_owner }}
+      DEFAULT_BRANCH_FALLBACK: ${{ github.event.repository.default_branch }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git user
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Sync nanvix workflow files
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "GH_TOKEN is required"
+            exit 1
+          fi
+
+          # Resolve the branch to copy from, defaulting to the repository default branch.
+          DEFAULT_BRANCH="$DEFAULT_BRANCH_FALLBACK"
+          if [ -z "$DEFAULT_BRANCH" ]; then
+            DEFAULT_BRANCH=$(gh repo view "$REPOSITORY" --json defaultBranchRef --jq '.defaultBranchRef.name')
+          fi
+          echo "Default branch detected: $DEFAULT_BRANCH"
+
+          git fetch origin --prune
+
+          # Collect workflow files (ya?ml) in the default branch that match the prefix.
+          SYNC_REGEX="^${SYNC_TARGET_PATTERN//./\.}.*\.ya?ml$"
+          mapfile -t SYNC_TARGETS < <(
+            git -C "$GITHUB_WORKSPACE" ls-tree -r --name-only "origin/$DEFAULT_BRANCH" -- '.github/workflows' |
+            grep -E "$SYNC_REGEX" || true
+          )
+
+          if [ "${#SYNC_TARGETS[@]}" -eq 0 ]; then
+            echo "No workflow files matching ${SYNC_TARGET_PATTERN}*.ya?ml found on $DEFAULT_BRANCH."
+            exit 0
+          fi
+
+          # Identify every branch eligible for synchronization (e.g., nanvix/*).
+          TARGET_BRANCH_REGEX="^${TARGET_BRANCH_PREFIX//./\.}"
+          mapfile -t TARGET_BRANCHES < <(
+            gh api "repos/$REPOSITORY/branches" --paginate --jq '.[].name' | grep -E "$TARGET_BRANCH_REGEX" || true
+          )
+
+          if [ "${#TARGET_BRANCHES[@]}" -eq 0 ]; then
+            echo "No branches matching nanvix/* were found."
+            exit 0
+          fi
+
+          WORKTREE_ROOT="$RUNNER_TEMP/nanvix-sync-worktrees"
+          mkdir -p "$WORKTREE_ROOT"
+          ensure_assignment() {
+            local pr_number="$1"
+            if [ -z "$pr_number" ]; then
+              return
+            fi
+            if ! gh pr edit "$pr_number" --repo "$REPOSITORY" --add-assignee "$ASSIGNEE_TARGET" --add-reviewer "$ASSIGNEE_TARGET" >/dev/null; then
+              echo "Warning: could not assign or request review from $ASSIGNEE_TARGET for PR #$pr_number; continuing."
+            fi
+          }
+
+          declare -a UPDATED_BRANCHES=()
+          declare -a SYNCED_BRANCHES=()
+
+          for BRANCH in "${TARGET_BRANCHES[@]}"; do
+            if [ "$BRANCH" = "$DEFAULT_BRANCH" ]; then
+              echo "Skipping default branch $BRANCH"
+              continue
+            fi
+
+            SAFE_BRANCH="${BRANCH//\//-}"
+            WORK_BRANCH="automation/nanvix-sync/$SAFE_BRANCH"
+            WORKTREE_PATH="$WORKTREE_ROOT/$SAFE_BRANCH"
+
+            echo "::group::Branch $BRANCH"
+            rm -rf "$WORKTREE_PATH"
+            git worktree add -B "$WORK_BRANCH" "$WORKTREE_PATH" "origin/$BRANCH" >/dev/null 2>&1
+
+            pushd "$WORKTREE_PATH" >/dev/null
+
+            CHANGED=0
+            COPIED_FILES=()
+            for FILE in "${SYNC_TARGETS[@]}"; do
+              if git -C "$GITHUB_WORKSPACE" cat-file -e "origin/$DEFAULT_BRANCH:$FILE" 2>/dev/null; then
+                mkdir -p "$(dirname "$FILE")"
+                git -C "$GITHUB_WORKSPACE" show "origin/$DEFAULT_BRANCH:$FILE" > "$FILE"
+                COPIED_FILES+=("$FILE")
+              else
+                echo "File $FILE does not exist on $DEFAULT_BRANCH; skipping."
+                continue
+              fi
+            done
+
+            if [ "${#COPIED_FILES[@]}" -gt 0 ] && git status --short -- "${COPIED_FILES[@]}" | grep -q .; then
+              CHANGED=1
+            fi
+
+            if [ "$CHANGED" -eq 1 ]; then
+              # Commit, push, and open/refresh a PR with the synced workflows.
+              git add "${COPIED_FILES[@]}"
+              git commit -m "Sync workflows from $DEFAULT_BRANCH"
+              git push origin "$WORK_BRANCH" --force-with-lease
+              UPDATED_BRANCHES+=("$BRANCH")
+
+              PR_TITLE="Sync workflows from $DEFAULT_BRANCH into $BRANCH"
+              SYNC_LIST=""
+              for FILE in "${SYNC_TARGETS[@]}"; do
+                SYNC_LIST+="- $FILE"$'\n'
+              done
+              PR_BODY="This automated change keeps selected workflow files aligned with $DEFAULT_BRANCH.\n\nUpdated files:\n${SYNC_LIST}Generated by .github/workflows/nanvix-sync-version.yml."
+
+              EXISTING_PR=$(gh pr list --repo "$REPOSITORY" --state open --base "$BRANCH" --head "$REPOSITORY_OWNER:$WORK_BRANCH" --json number --jq '.[0].number' || true)
+              if [ -n "$EXISTING_PR" ]; then
+                gh pr edit "$EXISTING_PR" --repo "$REPOSITORY" --title "$PR_TITLE" --body "$PR_BODY" >/dev/null
+                ensure_assignment "$EXISTING_PR"
+                echo "Updated existing PR #$EXISTING_PR"
+              else
+                PR_URL=$(gh pr create \
+                  --repo "$REPOSITORY" \
+                  --title "$PR_TITLE" \
+                  --body "$PR_BODY" \
+                  --base "$BRANCH" \
+                  --head "$WORK_BRANCH")
+
+                NEW_PR_NUMBER=""
+                if [ -n "$PR_URL" ]; then
+                  CANDIDATE="${PR_URL##*/}"
+                  if [[ "$CANDIDATE" =~ ^[0-9]+$ ]]; then
+                    NEW_PR_NUMBER="$CANDIDATE"
+                  fi
+                fi
+
+                if [ -z "$NEW_PR_NUMBER" ]; then
+                  echo "Warning: could not determine PR number from output: $PR_URL"
+                else
+                  ensure_assignment "$NEW_PR_NUMBER"
+                  echo "Opened PR #$NEW_PR_NUMBER for $BRANCH"
+                fi
+              fi
+            else
+              echo "Branch $BRANCH already has matching workflow files."
+              SYNCED_BRANCHES+=("$BRANCH")
+              git push origin --delete "$WORK_BRANCH" >/dev/null 2>&1 || true
+            fi
+
+            popd >/dev/null
+            git worktree remove "$WORKTREE_PATH" --force >/dev/null 2>&1
+            echo "::endgroup::"
+          done
+
+          {
+            echo "## nanvix workflow sync"
+            if [ "${#UPDATED_BRANCHES[@]}" -gt 0 ]; then
+              echo ""
+              echo "PRs opened or updated for:"
+              for BR in "${UPDATED_BRANCHES[@]}"; do
+                echo "- $BR"
+              done
+            else
+              echo ""
+              echo "No changes were required; all tracked branches already match $DEFAULT_BRANCH."
+            fi
+
+            if [ "${#SYNCED_BRANCHES[@]}" -gt 0 ]; then
+              echo ""
+              echo "Branches already in sync:"
+              for BR in "${SYNCED_BRANCHES[@]}"; do
+                echo "- $BR"
+              done
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
