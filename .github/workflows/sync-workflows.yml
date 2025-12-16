@@ -31,10 +31,6 @@ permissions:
   contents: write
   pull-requests: write
 
-concurrency:
-  group: nanvix-sync-version
-  cancel-in-progress: false
-
 jobs:
   sync-workflows:
     name: Synchronize nanvix workflows
