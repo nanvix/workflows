@@ -99,7 +99,7 @@ jobs:
           if not specs:
               raise SystemExit('No dependency specs could be derived from patches')
 
-          body_path = pathlib.Path('patched-pr-body.md')
+          body_path = pathlib.Path('/tmp/patched-pr-body.md')
           body_text = '\n'.join(
               ['Automated cargo updates for Nanvix dependencies:']
               + bullet_lines
