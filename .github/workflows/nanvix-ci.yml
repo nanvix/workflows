@@ -59,8 +59,8 @@ on:
         type: string
     secrets:
       GH_TOKEN:
-        description: Token with repo read access (for zutil install and artifact downloads).
-        required: true
+        description: Token with repo read access (for zutil install and artifact downloads). Falls back to github.token if not provided.
+        required: false
       DISPATCH_TOKEN:
         description: Token with repo scope on downstream repos (for dispatches).
         required: false
@@ -88,7 +88,7 @@ jobs:
 
       - name: Install nanvix-zutil
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
           NANVIX_ZUTIL_VERSION: ${{ inputs.zutil-version }}
         run: |
           WHEEL_URL=$(gh api repos/nanvix/zutils/releases/tags/"$NANVIX_ZUTIL_VERSION" \
@@ -98,7 +98,7 @@ jobs:
       - name: Resolve lockfile and extract release info
         id: resolve
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
         run: nanvix-zutil resolve >> "$GITHUB_OUTPUT"
 
   # -------------------------------------------------------------------
@@ -135,7 +135,7 @@ jobs:
 
       - name: Install nanvix-zutil
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
           NANVIX_ZUTIL_VERSION: ${{ inputs.zutil-version }}
         run: |
           WHEEL_URL=$(gh api repos/nanvix/zutils/releases/tags/"$NANVIX_ZUTIL_VERSION" \
@@ -144,7 +144,7 @@ jobs:
 
       - name: Setup
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
         run: ./z setup
 
       - name: Build
@@ -223,7 +223,7 @@ jobs:
 
       - name: Generate lockfile
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
         run: |
           set -euo pipefail
           WHEEL_URL=$(gh api repos/nanvix/zutils/releases/tags/"$NANVIX_ZUTIL_VERSION" \
@@ -235,7 +235,7 @@ jobs:
 
       - name: Create release
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
         run: |
           RELEASE_TAG="${{ needs.get-nanvix-info.outputs.package_version }}-nanvix-${{ needs.get-nanvix-info.outputs.nanvix_version }}"
 
