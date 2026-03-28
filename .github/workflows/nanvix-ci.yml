@@ -1,0 +1,283 @@
+# Copyright(c) The Maintainers of Nanvix.
+# Licensed under the MIT License.
+
+# Reusable CI workflow for Nanvix library ports (zlib, bzip2, etc.).
+# Consumer repos invoke this via a thin caller workflow that supplies
+# repo-specific values through inputs and secrets.
+
+name: Nanvix CI
+
+on:
+  workflow_call:
+    inputs:
+      zutil-version:
+        description: nanvix-zutil version to install (e.g. v0.4.0).
+        required: true
+        type: string
+      platforms:
+        description: JSON array of target platforms.
+        required: false
+        default: '["hyperlight","microvm"]'
+        type: string
+      process-modes:
+        description: JSON array of deployment modes.
+        required: false
+        default: '["multi-process","single-process","standalone"]'
+        type: string
+      memory-sizes:
+        description: JSON array of memory configurations.
+        required: false
+        default: '["128mb"]'
+        type: string
+      standalone-test-args:
+        description: Extra args passed to ./z test -- for modes in skip-full-test-modes.
+        required: false
+        default: "test-smoke test-integration"
+        type: string
+      skip-full-test-modes:
+        description: JSON array of modes that skip the full ./z test and use standalone-test-args instead.
+        required: false
+        default: '["standalone"]'
+        type: string
+      downstream-dispatches:
+        description: >
+          JSON array of {repo, event_type} objects. Each entry triggers a
+          repository_dispatch on the target repo after a successful release.
+        required: false
+        default: "[]"
+        type: string
+      caller-event-name:
+        description: >
+          github.event_name from the caller workflow. Required because the
+          reusable workflow always sees "workflow_call".
+        required: true
+        type: string
+      release-notes-extra:
+        description: Extra markdown to append to the release notes.
+        required: false
+        default: ""
+        type: string
+    secrets:
+      GH_TOKEN:
+        description: Token with repo read access (for zutil install and artifact downloads).
+        required: true
+      DISPATCH_TOKEN:
+        description: Token with repo scope on downstream repos (for dispatches).
+        required: false
+
+permissions:
+  contents: write
+  actions: write
+  issues: write
+
+jobs:
+  # -------------------------------------------------------------------
+  # Job 1: Resolve Nanvix release metadata via nanvix-zutil
+  # -------------------------------------------------------------------
+  get-nanvix-info:
+    name: Get Nanvix Info
+    runs-on: ubuntu-latest
+    outputs:
+      nanvix_tag: ${{ steps.resolve.outputs.nanvix_tag }}
+      nanvix_sha: ${{ steps.resolve.outputs.nanvix_sha }}
+      nanvix_version: ${{ steps.resolve.outputs.nanvix_version }}
+      package_name: ${{ steps.resolve.outputs.package_name }}
+      package_version: ${{ steps.resolve.outputs.package_version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install nanvix-zutil
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          NANVIX_ZUTIL_VERSION: ${{ inputs.zutil-version }}
+        run: |
+          WHEEL_URL=$(gh api repos/nanvix/zutils/releases/tags/"$NANVIX_ZUTIL_VERSION" \
+            --jq '.assets[] | select(.name | endswith(".whl")) | .browser_download_url')
+          python3 -m pip install "$WHEEL_URL"
+
+      - name: Resolve lockfile and extract release info
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: nanvix-zutil resolve >> "$GITHUB_OUTPUT"
+
+  # -------------------------------------------------------------------
+  # Job 2: Matrix build — platform × process-mode × memory
+  # -------------------------------------------------------------------
+  build:
+    needs: get-nanvix-info
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(inputs.platforms) }}
+        process-mode: ${{ fromJSON(inputs.process-modes) }}
+        memory: ${{ fromJSON(inputs.memory-sizes) }}
+    name: ${{ matrix.platform }}-${{ matrix.process-mode }}-${{ matrix.memory }}
+    container:
+      image: nanvix/toolchain:latest-minimal
+      options: --device /dev/kvm
+    defaults:
+      run:
+        shell: bash
+    env:
+      NANVIX_MACHINE: ${{ matrix.platform }}
+      NANVIX_DEPLOYMENT_MODE: ${{ matrix.process-mode }}
+      NANVIX_MEMORY_SIZE: ${{ matrix.memory }}
+      NANVIX_VERSION: ${{ needs.get-nanvix-info.outputs.nanvix_tag }}
+      USER: runner
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install gh CLI and pip
+        run: |
+          apt-get update -qq && apt-get install -y -qq gh python3-pip
+
+      - name: Install nanvix-zutil
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          NANVIX_ZUTIL_VERSION: ${{ inputs.zutil-version }}
+        run: |
+          WHEEL_URL=$(gh api repos/nanvix/zutils/releases/tags/"$NANVIX_ZUTIL_VERSION" \
+            --jq '.assets[] | select(.name | endswith(".whl")) | .browser_download_url')
+          python3 -m pip install --break-system-packages "$WHEEL_URL"
+
+      - name: Setup
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: ./z setup
+
+      - name: Build
+        run: ./z build
+
+      - name: Test
+        if: ${{ !contains(fromJSON(inputs.skip-full-test-modes), matrix.process-mode) }}
+        run: ./z test
+
+      - name: Test (limited)
+        if: ${{ contains(fromJSON(inputs.skip-full-test-modes), matrix.process-mode) }}
+        run: ./z test -- ${{ inputs.standalone-test-args }}
+
+      - name: Release
+        if: success()
+        run: ./z release
+
+      - name: Upload build artifacts
+        if: success()
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ needs.get-nanvix-info.outputs.package_name }}-${{ needs.get-nanvix-info.outputs.package_version }}-${{ matrix.platform }}-${{ matrix.process-mode }}-${{ matrix.memory }}
+          path: dist/*.tar.bz2
+          retention-days: 7
+
+      - name: Collect failure logs
+        if: failure()
+        run: |
+          mkdir -p ci-logs
+          cp -f /tmp/*.log ci-logs/ 2>/dev/null || true
+          find .nanvix -type f -name "*.log" -exec cp -f {} ci-logs/ \; 2>/dev/null || true
+
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: failure-logs-${{ matrix.platform }}-${{ matrix.process-mode }}
+          path: ci-logs/*
+          if-no-files-found: warn
+
+  # -------------------------------------------------------------------
+  # Job 3: Create a GitHub release and trigger downstream workflows
+  # -------------------------------------------------------------------
+  release:
+    needs: [get-nanvix-info, build]
+    if: ${{ !cancelled() && inputs.caller-event-name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    env:
+      NANVIX_ZUTIL_VERSION: ${{ inputs.zutil-version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download all build artifacts
+        id: download-artifacts
+        uses: actions/download-artifact@v5
+        continue-on-error: true
+        with:
+          path: release-artifacts
+          pattern: ${{ needs.get-nanvix-info.outputs.package_name }}-${{ needs.get-nanvix-info.outputs.package_version }}-*
+
+      - name: Prepare release assets
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          if [[ "${{ steps.download-artifacts.outcome }}" == "failure" ]]; then
+            echo "::warning::Artifact download failed — possible API or network issue"
+          fi
+          find release-artifacts -name "*.tar.bz2" -exec cp {} release-assets/ \; 2>/dev/null || true
+          ASSET_COUNT=$(find release-assets -name "*.tar.bz2" 2>/dev/null | wc -l)
+          echo "Found $ASSET_COUNT release asset(s)"
+          if [[ "$ASSET_COUNT" -eq 0 ]]; then
+            echo "::error::No release assets found — all matrix builds may have failed"
+            exit 1
+          fi
+          ls -la release-assets/
+
+      - name: Generate lockfile
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          set -euo pipefail
+          WHEEL_URL=$(gh api repos/nanvix/zutils/releases/tags/"$NANVIX_ZUTIL_VERSION" \
+            --jq '.assets[] | select(.name | endswith(".whl")) | .browser_download_url')
+          python3 -m pip install "$WHEEL_URL"
+          nanvix-zutil resolve > /dev/null
+          nanvix-zutil lock --shallow
+          cp .nanvix/nanvix.lock release-assets/nanvix.lock
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          RELEASE_TAG="${{ needs.get-nanvix-info.outputs.package_version }}-nanvix-${{ needs.get-nanvix-info.outputs.nanvix_version }}"
+
+          if gh release view "$RELEASE_TAG" &>/dev/null; then
+            echo "Release $RELEASE_TAG already exists — skipping"
+            exit 0
+          fi
+
+          NOTES="Automated build from branch ${{ github.ref_name }}.
+
+          **Build:** [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          **Commit:** [${{ github.sha }}](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
+          **Nanvix:** [${{ needs.get-nanvix-info.outputs.nanvix_sha }}](https://github.com/nanvix/nanvix/commit/${{ needs.get-nanvix-info.outputs.nanvix_sha }})"
+
+          if [[ -n "${{ inputs.release-notes-extra }}" ]]; then
+            NOTES="${NOTES}
+
+          ${{ inputs.release-notes-extra }}"
+          fi
+
+          gh release create "$RELEASE_TAG" \
+            --title "Build ${GITHUB_SHA::7}" \
+            --notes "$NOTES" \
+            --latest \
+            release-assets/*
+
+      - name: Trigger downstream workflows
+        if: ${{ success() && inputs.downstream-dispatches != '[]' }}
+        env:
+          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+          DISPATCHES: ${{ inputs.downstream-dispatches }}
+          RELEASE_TAG: ${{ needs.get-nanvix-info.outputs.package_version }}-nanvix-${{ needs.get-nanvix-info.outputs.nanvix_version }}
+          NANVIX_SHA: ${{ needs.get-nanvix-info.outputs.nanvix_sha }}
+        run: |
+          echo "$DISPATCHES" | jq -c '.[]' | while read -r entry; do
+            REPO=$(echo "$entry" | jq -r '.repo')
+            EVENT=$(echo "$entry" | jq -r '.event_type')
+            echo "Dispatching $EVENT to $REPO..."
+            gh api "repos/$REPO/dispatches" -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -f "event_type=$EVENT" \
+              -f "client_payload[nanvix_sha]=$NANVIX_SHA" \
+              -f "client_payload[release_tag]=$RELEASE_TAG" \
+              || echo "::warning::Failed to trigger $REPO"
+          done
