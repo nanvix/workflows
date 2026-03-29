@@ -1,0 +1,9 @@
+[
+  "nanvix/zlib",
+  "nanvix/bzip2",
+  "nanvix/sqlite",
+  "nanvix/libffi",
+  "nanvix/openssl",
+  "nanvix/cpython",
+  "nanvix/quickjs"
+]
