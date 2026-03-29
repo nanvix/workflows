@@ -1,0 +1,43 @@
+# Copyright(c) The Maintainers of Nanvix.
+# Licensed under the MIT License.
+
+# Test caller for the reusable nanvix-ci workflow.
+# Trigger manually via workflow_dispatch to validate changes to the
+# reusable workflow before merging. Uses a minimal matrix to keep
+# runtime short.
+
+name: Test Nanvix CI
+
+on:
+  workflow_dispatch:
+    inputs:
+      zutil-version:
+        description: nanvix-zutil version to install (e.g. v0.4.0).
+        required: true
+        default: "v0.4.0"
+        type: string
+      platforms:
+        description: JSON array of target platforms (default is minimal).
+        required: false
+        default: '["hyperlight"]'
+        type: string
+      process-modes:
+        description: JSON array of deployment modes (default is minimal).
+        required: false
+        default: '["single-process"]'
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/nanvix-ci.yml
+    with:
+      zutil-version: ${{ inputs.zutil-version }}
+      platforms: ${{ inputs.platforms }}
+      process-modes: ${{ inputs.process-modes }}
+      caller-event-name: ${{ github.event_name }}
+    secrets:
+      GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
