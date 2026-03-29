@@ -29,6 +29,13 @@ on:
         required: false
         default: '["128mb"]'
         type: string
+      matrix-exclude:
+        description: >
+          JSON array of {platform, process-mode} objects to exclude from the
+          build matrix. Example: [{"platform":"hyperlight","process-mode":"single-process"}]
+        required: false
+        default: "[]"
+        type: string
       standalone-test-args:
         description: Extra args passed to ./z test -- for modes in skip-full-test-modes.
         required: false
@@ -113,6 +120,7 @@ jobs:
         platform: ${{ fromJSON(inputs.platforms) }}
         process-mode: ${{ fromJSON(inputs.process-modes) }}
         memory: ${{ fromJSON(inputs.memory-sizes) }}
+        exclude: ${{ fromJSON(inputs.matrix-exclude) }}
     name: ${{ matrix.platform }}-${{ matrix.process-mode }}-${{ matrix.memory }}
     container:
       image: nanvix/toolchain:latest-minimal
