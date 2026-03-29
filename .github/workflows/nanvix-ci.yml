@@ -186,7 +186,79 @@ jobs:
           if-no-files-found: warn
 
   # -------------------------------------------------------------------
-  # Job 3: Create a GitHub release and trigger downstream workflows
+  # Job 3: Open a GitHub issue on scheduled-run failures
+  # -------------------------------------------------------------------
+  report-failure:
+    needs: [get-nanvix-info, build]
+    if: ${{ always() && needs.build.result == 'failure' && inputs.caller-event-name == 'schedule' && github.ref_name == github.event.repository.default_branch }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report failure
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+
+          REPO="${{ github.repository }}"
+          RUN_URL="${{ github.server_url }}/${REPO}/actions/runs/${{ github.run_id }}"
+          NANVIX_VER="${{ needs.get-nanvix-info.outputs.nanvix_version }}"
+          TITLE="CI: Scheduled run failure (nanvix ${NANVIX_VER})"
+          LABEL="ci-failure"
+          TIMESTAMP="$(date -u '+%Y-%m-%d %H:%M UTC')"
+
+          # Ensure the label exists.
+          gh label create "$LABEL" \
+            --repo "$REPO" \
+            --description "Automated: scheduled CI run failure" \
+            --color "D73A4A" 2>/dev/null || true
+
+          # Resolve repo admins for assignment using collaborators with admin permission.
+          ADMINS=$(gh api "repos/${REPO}/collaborators?permission=admin" \
+            --paginate --jq '[.[].login] | join(",")' 2>/dev/null || true)
+
+          # Build the occurrence entry for this failure.
+          OCCURRENCE="| ${TIMESTAMP} | ${NANVIX_VER} | [#${{ github.run_number }}](${RUN_URL}) | [\`${GITHUB_SHA::7}\`](${{ github.server_url }}/${REPO}/commit/${{ github.sha }}) |"
+
+          # Check if an open issue with the same label already exists.
+          EXISTING=$(gh issue list --repo "$REPO" --label "$LABEL" --state open --limit 1 --json number,body --jq '.[0]' 2>/dev/null || echo "")
+
+          if [[ -n "$EXISTING" && "$EXISTING" != "null" ]]; then
+            ISSUE_NUM=$(echo "$EXISTING" | jq -r '.number')
+            OLD_BODY=$(echo "$EXISTING" | jq -r '.body')
+            NEW_BODY="${OLD_BODY}
+          ${OCCURRENCE}"
+            gh issue edit "$ISSUE_NUM" \
+              --repo "$REPO" \
+              --body "$NEW_BODY"
+            echo "Updated existing issue #${ISSUE_NUM} with new occurrence."
+            exit 0
+          fi
+
+          BODY="## Scheduled CI Failure
+
+          **Repository:** ${REPO}
+          **Branch:** ${{ github.ref_name }}
+
+          ### Occurrences
+
+          | Date | Nanvix Version | Workflow Run | Commit |
+          |------|----------------|--------------|--------|
+          ${OCCURRENCE}"
+
+          ASSIGNEE_ARGS=()
+          if [[ -n "$ADMINS" ]]; then
+            ASSIGNEE_ARGS=(--assignee "$ADMINS")
+          fi
+
+          gh issue create \
+            --repo "$REPO" \
+            --title "$TITLE" \
+            --body "$BODY" \
+            --label "$LABEL" \
+            "${ASSIGNEE_ARGS[@]}"
+
+  # -------------------------------------------------------------------
+  # Job 4: Create a GitHub release and trigger downstream workflows
   # -------------------------------------------------------------------
   release:
     needs: [get-nanvix-info, build]
