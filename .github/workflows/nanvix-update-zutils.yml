@@ -106,10 +106,10 @@ jobs:
             git checkout -B "$BRANCH"
             git commit -m "$COMMIT_MSG"
 
-            # Push using DISPATCH_TOKEN credentials without embedding
-            # the token in the remote URL.
-            git -c "http.extraheader=AUTHORIZATION: bearer ${DISPATCH_TOKEN}" \
-              push origin "$BRANCH" --force 2>&1 || return 1
+            # Push using a one-off authenticated URL to avoid
+            # persisting the token in .git/config.
+            git push "https://x-access-token:${DISPATCH_TOKEN}@github.com/${REPO}.git" \
+              "$BRANCH" --force 2>&1 || return 1
 
             # Open or refresh a PR.
             local PR_TITLE="[ci] E: Update zutil-version to ${LATEST_TAG}"
