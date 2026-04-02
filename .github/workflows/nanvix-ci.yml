@@ -175,7 +175,9 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: ${{ needs.get-nanvix-info.outputs.package_name }}-${{ needs.get-nanvix-info.outputs.package_version }}-${{ matrix.platform }}-${{ matrix.process-mode }}-${{ matrix.memory }}
-          path: dist/*.tar.bz2
+          path: |
+            dist/*.tar.bz2
+            dist/*.zip
           retention-days: 7
 
       - name: Collect failure logs
@@ -292,7 +294,7 @@ jobs:
           if [[ "${{ steps.download-artifacts.outcome }}" == "failure" ]]; then
             echo "::warning::Artifact download failed — possible API or network issue"
           fi
-          find release-artifacts -name "*.tar.bz2" -exec cp {} release-assets/ \; 2>/dev/null || true
+          find release-artifacts \( -name "*.tar.bz2" -o -name "*.zip" \) -exec cp {} release-assets/ \; 2>/dev/null || true
           ASSET_COUNT=$(find release-assets -name "*.tar.bz2" 2>/dev/null | wc -l)
           echo "Found $ASSET_COUNT release asset(s)"
           if [[ "$ASSET_COUNT" -eq 0 ]]; then
