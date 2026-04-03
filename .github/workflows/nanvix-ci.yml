@@ -77,11 +77,27 @@ permissions:
   actions: write
   issues: write
 
+concurrency:
+  group: ${{ github.repository }}-nanvix-ci
+  cancel-in-progress: false
+
 jobs:
+  # -------------------------------------------------------------------
+  # Guard: placeholder job kept for existing `needs: guard` dependencies.
+  # Workflow serialization is enforced by the native `concurrency` key.
+  # -------------------------------------------------------------------
+  guard:
+    name: Concurrency guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Concurrency handled by GitHub Actions
+        run: echo "Workflow serialization is enforced by the top-level concurrency configuration."
+
   # -------------------------------------------------------------------
   # Job 1: Resolve Nanvix release metadata via nanvix-zutil
   # -------------------------------------------------------------------
   get-nanvix-info:
+    needs: guard
     name: Get Nanvix Info
     runs-on: ubuntu-latest
     outputs:
