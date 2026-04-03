@@ -2,9 +2,11 @@
 # Licensed under the MIT License.
 
 # This workflow syncs consumer repositories with the latest nanvix/zutils
-# release. It runs on a daily schedule (03:00 UTC) and can be triggered
-# manually via workflow_dispatch. It resolves the latest release tag of
-# nanvix/zutils, then iterates over each target repo:
+# release. It runs on a daily schedule (03:00 UTC), can be triggered
+# manually via workflow_dispatch, or called from another workflow (e.g.
+# the zutils release pipeline) via workflow_call with an explicit tag.
+# It resolves the latest release tag of nanvix/zutils (unless one is
+# provided), then iterates over each target repo:
 #   1. Updating `zutil-version: "vOLD"` to `"vLATEST"` in caller workflows.
 #   2. Copying bootstrapper templates (z, z.sh, z.ps1) from the release's
 #      templates.tar.gz asset to the repo root.
@@ -16,9 +18,23 @@ on:
   schedule:
     - cron: "0 3 * * *"
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      tag:
+        description: "Zutils release tag to sync (e.g. v0.6.0). Resolved from latest release if omitted."
+        required: false
+        type: string
+    secrets:
+      DISPATCH_TOKEN:
+        description: "PAT with repo scope for cloning/pushing to consumer repos"
+        required: true
 
 permissions:
   contents: read
+
+concurrency:
+  group: update-zutils
+  cancel-in-progress: true
 
 jobs:
   update-zutils:
@@ -31,12 +47,20 @@ jobs:
     steps:
       - name: Checkout workflows repo
         uses: actions/checkout@v5
+        with:
+          repository: nanvix/workflows
+          ref: ${{ github.event_name == 'workflow_call' && github.workflow_sha || github.sha }}
 
       - name: Resolve latest zutils release tag
         id: latest
+        env:
+          TAG_INPUT: ${{ inputs.tag || '' }}
         run: |
           set -euo pipefail
-          TAG=$(gh api repos/nanvix/zutils/releases/latest --jq '.tag_name')
+          TAG="$TAG_INPUT"
+          if [ -z "$TAG" ]; then
+            TAG=$(gh api repos/nanvix/zutils/releases/latest --jq '.tag_name')
+          fi
           if [ -z "$TAG" ]; then
             echo "::error::Could not resolve latest release tag for nanvix/zutils"
             exit 1
