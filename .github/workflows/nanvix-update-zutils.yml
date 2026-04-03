@@ -49,10 +49,12 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: nanvix/workflows
-          # workflow_call: github.sha is the *caller's* commit, not ours.
-          # Use workflow_sha (the reusable-workflow commit) when called,
-          # otherwise omit to default to the repo's default branch.
-          ref: ${{ github.event_name == 'workflow_call' && github.workflow_sha || '' }}
+          # No explicit ref — actions/checkout uses the default branch
+          # for cross-repo checkouts (workflow_call from zutils) and
+          # github.sha for same-repo runs (schedule/dispatch).
+          # Both github.sha and github.workflow_sha refer to the
+          # *caller's* repo in a workflow_call context, so any explicit
+          # ref would try to fetch a zutils SHA from this repo and fail.
 
       - name: Resolve latest zutils release tag
         id: latest
