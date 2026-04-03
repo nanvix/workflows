@@ -50,7 +50,7 @@ jobs:
         id: latest
         run: |
           set -euo pipefail
-          TAG="${{ inputs.tag }}"
+          TAG="${{ inputs.tag || '' }}"
           if [ -z "$TAG" ]; then
             TAG=$(gh api repos/nanvix/zutils/releases/latest --jq '.tag_name')
           fi
