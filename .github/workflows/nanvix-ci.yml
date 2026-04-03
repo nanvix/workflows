@@ -66,7 +66,9 @@ on:
         type: string
     secrets:
       GH_TOKEN:
-        description: Token with repo read access (for zutil install and artifact downloads).
+        description: >
+          Token with repo read access (for zutil install and artifact downloads)
+          and contents + pull-requests write (for the update-nanvix-version job).
         required: true
       DISPATCH_TOKEN:
         description: Token with repo scope on downstream repos (for dispatches).
@@ -377,3 +379,44 @@ jobs:
               -f "client_payload[release_tag]=$RELEASE_TAG" \
               || echo "::warning::Failed to trigger $REPO"
           done
+
+  # -------------------------------------------------------------------
+  # Job 5: Pin nanvix version in consumer repo
+  # -------------------------------------------------------------------
+  update-nanvix-version:
+    name: Update Nanvix Version
+    if: ${{ inputs.caller-event-name == 'schedule' || inputs.caller-event-name == 'repository_dispatch' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          token: ${{ secrets.GH_TOKEN }}
+
+      - name: Checkout workflow scripts
+        uses: actions/checkout@v5
+        with:
+          repository: nanvix/workflows
+          path: .nanvix-workflows
+          sparse-checkout: scripts
+
+      - name: Resolve latest nanvix release tag
+        id: latest
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: .nanvix-workflows/scripts/resolve-nanvix-tag.sh
+
+      - name: Check current nanvix-version
+        id: current
+        run: .nanvix-workflows/scripts/check-nanvix-version.sh
+
+      - name: Update nanvix-version and open PR
+        if: ${{ steps.current.outputs.version != steps.latest.outputs.version }}
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          LATEST_VERSION: ${{ steps.latest.outputs.version }}
+          LATEST_TAG: ${{ steps.latest.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: .nanvix-workflows/scripts/update-nanvix-version.sh
