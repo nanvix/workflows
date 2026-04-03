@@ -45,6 +45,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: nanvix/workflows
+          ref: ${{ github.event_name == 'workflow_call' && github.workflow_sha || github.ref }}
 
       - name: Resolve latest zutils release tag
         id: latest
