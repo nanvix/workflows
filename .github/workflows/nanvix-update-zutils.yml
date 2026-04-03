@@ -32,6 +32,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: update-zutils
+  cancel-in-progress: true
+
 jobs:
   update-zutils:
     name: Update zutils version
