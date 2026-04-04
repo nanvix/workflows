@@ -78,6 +78,7 @@ permissions:
   contents: write
   actions: write
   issues: write
+  pull-requests: write
 
 concurrency:
   group: ${{ github.repository }}-nanvix-ci
