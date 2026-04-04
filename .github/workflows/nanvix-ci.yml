@@ -73,6 +73,22 @@ on:
       DISPATCH_TOKEN:
         description: Token with repo scope on downstream repos (for dispatches).
         required: false
+    outputs:
+      package_name:
+        description: Package name resolved from the manifest.
+        value: ${{ jobs.get-nanvix-info.outputs.package_name }}
+      package_version:
+        description: Package version resolved from the manifest.
+        value: ${{ jobs.get-nanvix-info.outputs.package_version }}
+      nanvix_version:
+        description: Nanvix version resolved from the manifest.
+        value: ${{ jobs.get-nanvix-info.outputs.nanvix_version }}
+      nanvix_tag:
+        description: Nanvix release tag.
+        value: ${{ jobs.get-nanvix-info.outputs.nanvix_tag }}
+      nanvix_sha:
+        description: Nanvix commit SHA.
+        value: ${{ jobs.get-nanvix-info.outputs.nanvix_sha }}
 
 permissions:
   contents: write
