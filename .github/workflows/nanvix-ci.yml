@@ -78,7 +78,6 @@ permissions:
   contents: write
   actions: write
   issues: write
-  pull-requests: write
 
 jobs:
   # -------------------------------------------------------------------
@@ -374,9 +373,6 @@ jobs:
     name: Update Nanvix Version
     if: ${{ inputs.caller-event-name == 'schedule' || inputs.caller-event-name == 'repository_dispatch' }}
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
     steps:
       - uses: actions/checkout@v5
         with:
