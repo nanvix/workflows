@@ -94,6 +94,7 @@ permissions:
   contents: write
   actions: write
   issues: write
+  pull-requests: write
 
 jobs:
   # -------------------------------------------------------------------
@@ -214,30 +215,53 @@ jobs:
           if-no-files-found: warn
 
   # -------------------------------------------------------------------
-  # Job 3: Open a GitHub issue on scheduled-run failures
+  # Job 3: Open a GitHub issue on any job failure
   # -------------------------------------------------------------------
   report-failure:
-    needs: [get-nanvix-info, build]
-    if: ${{ always() && needs.build.result == 'failure' && inputs.caller-event-name == 'schedule' && github.ref_name == github.event.repository.default_branch }}
+    needs: [get-nanvix-info, build, release, update-nanvix-version]
+    if: >-
+      always() &&
+      (needs.build.result != 'success' && needs.build.result != 'skipped'
+       || needs.release.result != 'success' && needs.release.result != 'skipped'
+       || needs.update-nanvix-version.result != 'success' && needs.update-nanvix-version.result != 'skipped')
     runs-on: ubuntu-latest
     steps:
+      - name: Identify failed jobs
+        id: failed
+        run: |
+          FAILED=""
+          for pair in \
+            "build:${{ needs.build.result }}" \
+            "release:${{ needs.release.result }}" \
+            "update-nanvix-version:${{ needs.update-nanvix-version.result }}"
+          do
+            JOB="${pair%%:*}"
+            RESULT="${pair#*:}"
+            if [[ "$RESULT" != "success" && "$RESULT" != "skipped" ]]; then
+              FAILED="${FAILED:+$FAILED, }${JOB} (${RESULT})"
+            fi
+          done
+          echo "jobs=$FAILED" >> "$GITHUB_OUTPUT"
+
       - name: Report failure
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
+          FAILED_JOBS: ${{ steps.failed.outputs.jobs }}
         run: |
           set -euo pipefail
 
           REPO="${{ github.repository }}"
           RUN_URL="${{ github.server_url }}/${REPO}/actions/runs/${{ github.run_id }}"
           NANVIX_VER="${{ needs.get-nanvix-info.outputs.nanvix_version }}"
-          TITLE="CI: Scheduled run failure (nanvix ${NANVIX_VER})"
+          TITLE="CI: Workflow failure (nanvix ${NANVIX_VER})"
           LABEL="ci-failure"
           TIMESTAMP="$(date -u '+%Y-%m-%d %H:%M UTC')"
+          EVENT="${{ inputs.caller-event-name }}"
 
           # Ensure the label exists.
           gh label create "$LABEL" \
             --repo "$REPO" \
-            --description "Automated: scheduled CI run failure" \
+            --description "Automated: CI workflow failure" \
             --color "D73A4A" 2>/dev/null || true
 
           # Resolve repo admins for assignment using collaborators with admin permission.
@@ -245,7 +269,10 @@ jobs:
             --paginate --jq '[.[].login] | join(",")' 2>/dev/null || true)
 
           # Build the occurrence entry for this failure.
-          OCCURRENCE="| ${TIMESTAMP} | ${NANVIX_VER} | [#${{ github.run_number }}](${RUN_URL}) | [\`${GITHUB_SHA::7}\`](${{ github.server_url }}/${REPO}/commit/${{ github.sha }}) |"
+          OCCURRENCE="| ${TIMESTAMP} | ${EVENT} | ${NANVIX_VER} | ${FAILED_JOBS} | [#${{ github.run_number }}](${RUN_URL}) | [\`${GITHUB_SHA::7}\`](${{ github.server_url }}/${REPO}/commit/${{ github.sha }}) |"
+
+          HEADER="| Date | Trigger | Nanvix Version | Failed Jobs | Workflow Run | Commit |"
+          SEPARATOR="|------|---------|----------------|-------------|--------------|--------|"
 
           # Check if an open issue with the same label already exists.
           EXISTING=$(gh issue list --repo "$REPO" --label "$LABEL" --state open --limit 1 --json number,body --jq '.[0]' 2>/dev/null || echo "")
@@ -253,8 +280,16 @@ jobs:
           if [[ -n "$EXISTING" && "$EXISTING" != "null" ]]; then
             ISSUE_NUM=$(echo "$EXISTING" | jq -r '.number')
             OLD_BODY=$(echo "$EXISTING" | jq -r '.body')
-            NEW_BODY="${OLD_BODY}
-          ${OCCURRENCE}"
+
+            # Migrate legacy 4-column table to 6-column if needed.
+            if echo "$OLD_BODY" | grep -qF "| Date | Nanvix Version |" && \
+               ! echo "$OLD_BODY" | grep -qF "| Date | Trigger |"; then
+              OLD_BODY=$(echo "$OLD_BODY" | sed \
+                -e "s/| Date | Nanvix Version | Workflow Run | Commit |/${HEADER}/" \
+                -e "s/|------|----------------|--------------|--------|/${SEPARATOR}/")
+            fi
+
+            printf -v NEW_BODY '%s\n%s' "$OLD_BODY" "$OCCURRENCE"
             gh issue edit "$ISSUE_NUM" \
               --repo "$REPO" \
               --body "$NEW_BODY"
@@ -262,16 +297,12 @@ jobs:
             exit 0
           fi
 
-          BODY="## Scheduled CI Failure
-
-          **Repository:** ${REPO}
-          **Branch:** ${{ github.ref_name }}
-
-          ### Occurrences
-
-          | Date | Nanvix Version | Workflow Run | Commit |
-          |------|----------------|--------------|--------|
-          ${OCCURRENCE}"
+          printf -v BODY '## CI Workflow Failure\n\n**Repository:** %s\n**Branch:** %s\n\n### Occurrences\n\n%s\n%s\n%s' \
+            "$REPO" \
+            "${{ github.ref_name }}" \
+            "$HEADER" \
+            "$SEPARATOR" \
+            "$OCCURRENCE"
 
           ASSIGNEE_ARGS=()
           if [[ -n "$ADMINS" ]]; then
@@ -344,16 +375,17 @@ jobs:
             exit 0
           fi
 
-          NOTES="Automated build from branch ${{ github.ref_name }}.
-
-          **Build:** [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-          **Commit:** [${{ github.sha }}](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
-          **Nanvix:** [${{ needs.get-nanvix-info.outputs.nanvix_sha }}](https://github.com/nanvix/nanvix/commit/${{ needs.get-nanvix-info.outputs.nanvix_sha }})"
+          printf -v NOTES 'Automated build from branch %s.\n\n**Build:** [#%s](%s)\n**Commit:** [%s](%s)\n**Nanvix:** [%s](%s)' \
+            "${{ github.ref_name }}" \
+            "${{ github.run_number }}" \
+            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            "${{ github.sha }}" \
+            "${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}" \
+            "${{ needs.get-nanvix-info.outputs.nanvix_sha }}" \
+            "https://github.com/nanvix/nanvix/commit/${{ needs.get-nanvix-info.outputs.nanvix_sha }}"
 
           if [[ -n "${{ inputs.release-notes-extra }}" ]]; then
-            NOTES="${NOTES}
-
-          ${{ inputs.release-notes-extra }}"
+            printf -v NOTES '%s\n\n%s' "$NOTES" "${{ inputs.release-notes-extra }}"
           fi
 
           gh release create "$RELEASE_TAG" \
