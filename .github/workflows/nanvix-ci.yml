@@ -64,6 +64,14 @@ on:
         required: false
         default: ""
         type: string
+      failure-assignees:
+        description: >
+          Comma-separated GitHub usernames to assign on CI failure issues.
+          Replaces dynamic admin resolution which requires elevated token
+          permissions not available via GITHUB_TOKEN.
+        required: false
+        default: "ppenna"
+        type: string
     secrets:
       GH_TOKEN:
         description: >
@@ -264,9 +272,8 @@ jobs:
             --description "Automated: CI workflow failure" \
             --color "D73A4A" 2>/dev/null || true
 
-          # Resolve repo admins for assignment using collaborators with admin permission.
-          ADMINS=$(gh api "repos/${REPO}/collaborators?permission=admin" \
-            --paginate --jq '[.[].login] | join(",")' 2>/dev/null || true)
+          # Use the caller-supplied assignee list (defaults to "ppenna").
+          ADMINS="${{ inputs.failure-assignees }}"
 
           # Build the occurrence entry for this failure.
           OCCURRENCE="| ${TIMESTAMP} | ${EVENT} | ${NANVIX_VER} | ${FAILED_JOBS} | [#${{ github.run_number }}](${RUN_URL}) | [\`${GITHUB_SHA::7}\`](${{ github.server_url }}/${REPO}/commit/${{ github.sha }}) |"
@@ -293,7 +300,17 @@ jobs:
             gh issue edit "$ISSUE_NUM" \
               --repo "$REPO" \
               --body "$NEW_BODY"
-            echo "Updated existing issue #${ISSUE_NUM} with new occurrence."
+
+            # Post a comment so GitHub sends notifications to assignees/subscribers.
+            gh issue comment "$ISSUE_NUM" \
+              --repo "$REPO" \
+              --body "🔴 **New CI failure recorded** (${TIMESTAMP})
+
+          | Trigger | Nanvix Version | Failed Jobs | Run |
+          |---------|----------------|-------------|-----|
+          | ${EVENT} | ${NANVIX_VER} | ${FAILED_JOBS} | [#${{ github.run_number }}](${RUN_URL}) |"
+
+            echo "Updated existing issue #${ISSUE_NUM} with new occurrence and comment."
             exit 0
           fi
 
