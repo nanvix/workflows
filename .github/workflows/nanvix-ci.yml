@@ -424,7 +424,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          token: ${{ secrets.GH_TOKEN }}
+          token: ${{ secrets.DISPATCH_TOKEN || secrets.GH_TOKEN }}
 
       - name: Checkout workflow scripts
         uses: actions/checkout@v5
@@ -446,7 +446,7 @@ jobs:
       - name: Update nanvix-version and open PR
         if: ${{ steps.current.outputs.version != steps.latest.outputs.version }}
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN || secrets.GH_TOKEN }}
           LATEST_VERSION: ${{ steps.latest.outputs.version }}
           LATEST_TAG: ${{ steps.latest.outputs.tag }}
           REPO: ${{ github.repository }}
