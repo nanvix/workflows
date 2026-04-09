@@ -451,3 +451,24 @@ jobs:
           LATEST_TAG: ${{ steps.latest.outputs.tag }}
           REPO: ${{ github.repository }}
         run: .nanvix-workflows/scripts/update-nanvix-version.sh
+
+  # -------------------------------------------------------------------
+  # Job 6: CI gate — single required status check for branch protection
+  # -------------------------------------------------------------------
+  ci-passed:
+    needs: [build, release, update-nanvix-version]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check upstream results
+        run: |
+          for result in \
+            "${{ needs.build.result }}" \
+            "${{ needs.release.result }}" \
+            "${{ needs.update-nanvix-version.result }}"
+          do
+            if [[ "$result" == "failure" || "$result" == "cancelled" ]]; then
+              echo "Upstream job failed or was cancelled: $result"
+              exit 1
+            fi
+          done
