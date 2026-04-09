@@ -225,6 +225,11 @@ jobs:
                 --add-reviewer "$ASSIGNEE" 2>/dev/null || true
             fi
 
+            # Enable auto-merge so the PR merges once ci-passed succeeds.
+            if [ -n "${LATEST_PR:-}" ]; then
+              gh pr merge "$LATEST_PR" --repo "$REPO" --auto --squash 2>/dev/null || true
+            fi
+
             UPDATED_REPOS+=("$REPO")
           }
 
