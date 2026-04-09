@@ -10,6 +10,9 @@
 name: Update Workflow Refs
 
 on:
+  push:
+    tags:
+      - "v*"
   schedule:
     - cron: "0 2 * * *"
   workflow_dispatch:
