@@ -2,7 +2,7 @@
 # Licensed under the MIT License.
 
 # This workflow bumps the nanvix/workflows version reference in consumer fork
-# repositories. It resolves the latest release tag of this repository, then
+# repositories. It resolves the highest semver tag of this repository, then
 # iterates over each target repo, updating any
 # `uses: nanvix/workflows/...@vOLD` references to `@vLATEST` and opening (or
 # refreshing) a pull request when changes are detected.
@@ -28,13 +28,22 @@ jobs:
       - name: Checkout workflows repo
         uses: actions/checkout@v5
 
-      - name: Resolve latest release tag
+      - name: Resolve highest semver tag
         id: latest
         run: |
           set -euo pipefail
-          TAG=$(gh api repos/nanvix/workflows/releases/latest --jq '.tag_name')
+
+          # Use the highest semver tag instead of /releases/latest, which
+          # returns the most recently *published* release and can regress
+          # if a tag exists without a corresponding release (e.g. v1.5.0
+          # is tagged but never published as a GitHub Release, so the
+          # endpoint falls back to the older v1.4.0).
+          TAG=$(gh api repos/nanvix/workflows/tags --paginate --jq '.[].name' \
+            | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } \
+            | sort -V \
+            | tail -1)
           if [ -z "$TAG" ]; then
-            echo "::error::Could not resolve latest release tag for nanvix/workflows"
+            echo "::error::Could not resolve latest semver tag for nanvix/workflows"
             exit 1
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
