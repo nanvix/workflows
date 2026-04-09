@@ -20,6 +20,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: update-workflow-refs
+  cancel-in-progress: true
+
 jobs:
   update-refs:
     name: Update workflow refs
@@ -67,8 +71,7 @@ jobs:
           BRANCH="automation/update-nanvix-workflows"
           COMMIT_MSG="[ci] E: Update nanvix workflow refs to ${LATEST_TAG}"
 
-          declare -a UPDATED_REPOS=()
-          declare -a UPDATED_PRS=()
+          declare -a UPDATED_ITEMS=()
           declare -a SKIPPED_REPOS=()
           declare -a FAILED_REPOS=()
 
@@ -161,8 +164,7 @@ jobs:
                 --add-reviewer "$ASSIGNEE" 2>/dev/null || true
             fi
 
-            UPDATED_REPOS+=("$REPO")
-            UPDATED_PRS+=("https://github.com/${REPO}/pull/${LATEST_PR}")
+            UPDATED_ITEMS+=("${REPO} — https://github.com/${REPO}/pull/${LATEST_PR}")
             popd >/dev/null
           }
 
@@ -186,10 +188,10 @@ jobs:
             echo ""
             echo "**Target tag:** \`$LATEST_TAG\`"
 
-            if [ "${#UPDATED_REPOS[@]}" -gt 0 ]; then
+            if [ "${#UPDATED_ITEMS[@]}" -gt 0 ]; then
               echo ""
               echo "### PRs opened or updated"
-              for i in "${!UPDATED_REPOS[@]}"; do echo "- ${UPDATED_REPOS[$i]} — ${UPDATED_PRS[$i]}"; done
+              for R in "${UPDATED_ITEMS[@]}"; do echo "- $R"; done
             fi
 
             if [ "${#SKIPPED_REPOS[@]}" -gt 0 ]; then
