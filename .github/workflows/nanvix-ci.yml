@@ -255,6 +255,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
           FAILED_JOBS: ${{ steps.failed.outputs.jobs }}
+          FAILURE_ASSIGNEES: ${{ inputs.failure-assignees }}
+          CALLER_EVENT: ${{ inputs.caller-event-name }}
         run: |
           set -euo pipefail
 
@@ -264,7 +266,7 @@ jobs:
           TITLE="CI: Workflow failure (nanvix ${NANVIX_VER})"
           LABEL="ci-failure"
           TIMESTAMP="$(date -u '+%Y-%m-%d %H:%M UTC')"
-          EVENT="${{ inputs.caller-event-name }}"
+          EVENT="$CALLER_EVENT"
 
           # Ensure the label exists.
           gh label create "$LABEL" \
@@ -273,7 +275,7 @@ jobs:
             --color "D73A4A" 2>/dev/null || true
 
           # Use the caller-supplied assignee list (defaults to "ppenna").
-          ADMINS="${{ inputs.failure-assignees }}"
+          ADMINS="$FAILURE_ASSIGNEES"
 
           # Build the occurrence entry for this failure.
           OCCURRENCE="| ${TIMESTAMP} | ${EVENT} | ${NANVIX_VER} | ${FAILED_JOBS} | [#${{ github.run_number }}](${RUN_URL}) | [\`${GITHUB_SHA::7}\`](${{ github.server_url }}/${REPO}/commit/${{ github.sha }}) |"
@@ -302,13 +304,15 @@ jobs:
               --body "$NEW_BODY"
 
             # Post a comment so GitHub sends notifications to assignees/subscribers.
+            printf -v COMMENT_BODY '🔴 **New CI failure recorded** (%s)\n\n| Trigger | Nanvix Version | Failed Jobs | Run |\n|---------|----------------|-------------|-----|\n| %s | %s | %s | [#${{ github.run_number }}](%s) |' \
+              "$TIMESTAMP" \
+              "$EVENT" \
+              "$NANVIX_VER" \
+              "$FAILED_JOBS" \
+              "$RUN_URL"
             gh issue comment "$ISSUE_NUM" \
               --repo "$REPO" \
-              --body "🔴 **New CI failure recorded** (${TIMESTAMP})
-
-          | Trigger | Nanvix Version | Failed Jobs | Run |
-          |---------|----------------|-------------|-----|
-          | ${EVENT} | ${NANVIX_VER} | ${FAILED_JOBS} | [#${{ github.run_number }}](${RUN_URL}) |"
+              --body "$COMMENT_BODY"
 
             echo "Updated existing issue #${ISSUE_NUM} with new occurrence and comment."
             exit 0
