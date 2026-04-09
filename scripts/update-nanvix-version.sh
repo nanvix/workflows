@@ -66,3 +66,13 @@ else
 		--head "$BRANCH"
 	echo "Opened new PR."
 fi
+
+# Enable auto-merge so the PR merges once ci-passed succeeds.
+LATEST_PR="${EXISTING_PR:-}"
+if [ -z "$LATEST_PR" ]; then
+	LATEST_PR=$(gh pr list --repo "$REPO" --head "$BRANCH" --base "$DEFAULT_BRANCH" \
+		--state open --json number --jq '.[0].number // empty' 2>/dev/null || true)
+fi
+if [ -n "$LATEST_PR" ]; then
+	gh pr merge "$LATEST_PR" --repo "$REPO" --auto --squash 2>/dev/null || true
+fi
