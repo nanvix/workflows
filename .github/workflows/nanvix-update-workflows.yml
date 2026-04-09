@@ -68,6 +68,7 @@ jobs:
           COMMIT_MSG="[ci] E: Update nanvix workflow refs to ${LATEST_TAG}"
 
           declare -a UPDATED_REPOS=()
+          declare -a UPDATED_PRS=()
           declare -a SKIPPED_REPOS=()
           declare -a FAILED_REPOS=()
 
@@ -161,6 +162,7 @@ jobs:
             fi
 
             UPDATED_REPOS+=("$REPO")
+            UPDATED_PRS+=("https://github.com/${REPO}/pull/${LATEST_PR}")
             popd >/dev/null
           }
 
@@ -187,7 +189,7 @@ jobs:
             if [ "${#UPDATED_REPOS[@]}" -gt 0 ]; then
               echo ""
               echo "### PRs opened or updated"
-              for R in "${UPDATED_REPOS[@]}"; do echo "- $R"; done
+              for i in "${!UPDATED_REPOS[@]}"; do echo "- ${UPDATED_REPOS[$i]} — ${UPDATED_PRS[$i]}"; done
             fi
 
             if [ "${#SKIPPED_REPOS[@]}" -gt 0 ]; then
