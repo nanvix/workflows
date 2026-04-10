@@ -99,6 +99,7 @@ jobs:
               [ -f "$FILE" ] || continue
               if grep -qE 'uses:[[:space:]]*nanvix/workflows/.+@v[^[:space:]#]+' "$FILE"; then
                 sed -i -E "s|(uses:[[:space:]]*nanvix/workflows/.+)@v[^[:space:]#]+|\1@${LATEST_TAG}|g" "$FILE"
+
                 if ! git diff --quiet -- "$FILE"; then
                   git add "$FILE"
                   CHANGED=1
