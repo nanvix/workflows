@@ -64,6 +64,14 @@ on:
         required: false
         default: ""
         type: string
+      failure-assignees:
+        description: >
+          Comma-separated GitHub usernames to assign on CI failure issues.
+          Replaces dynamic admin resolution which requires elevated token
+          permissions not available via GITHUB_TOKEN.
+        required: false
+        default: "ppenna"
+        type: string
     secrets:
       GH_TOKEN:
         description: >
@@ -247,6 +255,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
           FAILED_JOBS: ${{ steps.failed.outputs.jobs }}
+          FAILURE_ASSIGNEES: ${{ inputs.failure-assignees }}
+          CALLER_EVENT: ${{ inputs.caller-event-name }}
         run: |
           set -euo pipefail
 
@@ -256,7 +266,7 @@ jobs:
           TITLE="CI: Workflow failure (nanvix ${NANVIX_VER})"
           LABEL="ci-failure"
           TIMESTAMP="$(date -u '+%Y-%m-%d %H:%M UTC')"
-          EVENT="${{ inputs.caller-event-name }}"
+          EVENT="$CALLER_EVENT"
 
           # Ensure the label exists.
           gh label create "$LABEL" \
@@ -264,9 +274,10 @@ jobs:
             --description "Automated: CI workflow failure" \
             --color "D73A4A" 2>/dev/null || true
 
-          # Resolve repo admins for assignment using collaborators with admin permission.
-          ADMINS=$(gh api "repos/${REPO}/collaborators?permission=admin" \
-            --paginate --jq '[.[].login] | join(",")' 2>/dev/null || true)
+          # Use the caller-supplied assignee list.
+          ADMINS="$FAILURE_ASSIGNEES"
+          # Normalize: trim whitespace and strip leading @
+          ADMINS=$(echo "$ADMINS" | tr ',' '\n' | sed 's/^[[:space:]]*@\{0,1\}//; s/[[:space:]]*$//' | tr '\n' ',' | sed 's/,$//')
 
           # Build the occurrence entry for this failure.
           OCCURRENCE="| ${TIMESTAMP} | ${EVENT} | ${NANVIX_VER} | ${FAILED_JOBS} | [#${{ github.run_number }}](${RUN_URL}) | [\`${GITHUB_SHA::7}\`](${{ github.server_url }}/${REPO}/commit/${{ github.sha }}) |"
@@ -293,7 +304,19 @@ jobs:
             gh issue edit "$ISSUE_NUM" \
               --repo "$REPO" \
               --body "$NEW_BODY"
-            echo "Updated existing issue #${ISSUE_NUM} with new occurrence."
+
+            # Post a comment so GitHub sends notifications to assignees/subscribers.
+            printf -v COMMENT_BODY '🔴 **New CI failure recorded** (%s)\n\n- **Trigger:** %s\n- **Nanvix Version:** %s\n- **Failed Jobs:** %s\n- **Run:** [#${{ github.run_number }}](%s)' \
+              "$TIMESTAMP" \
+              "$EVENT" \
+              "$NANVIX_VER" \
+              "$FAILED_JOBS" \
+              "$RUN_URL"
+            gh issue comment "$ISSUE_NUM" \
+              --repo "$REPO" \
+              --body "$COMMENT_BODY"
+
+            echo "Updated existing issue #${ISSUE_NUM} with new occurrence and comment."
             exit 0
           fi
 
