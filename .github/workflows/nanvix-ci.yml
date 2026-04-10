@@ -563,7 +563,7 @@ jobs:
     steps:
       - name: Merge automation PR
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
           PR_NUMBER: ${{ github.event.number }}
           REPO: ${{ github.repository }}
         run: |
