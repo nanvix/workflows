@@ -59,6 +59,15 @@ on:
           reusable workflow always sees "workflow_call".
         required: true
         type: string
+      caller-head-repo:
+        description: >
+          github.event.pull_request.head.repo.full_name from the caller.
+          Used by the auto-merge job to verify the PR originates from the
+          same repository (fork protection). Pass an empty string for
+          non-pull_request events.
+        required: false
+        default: ""
+        type: string
       release-notes-extra:
         description: Extra markdown to append to the release notes.
         required: false
@@ -498,6 +507,48 @@ jobs:
           done
 
   # -------------------------------------------------------------------
+  # Job 6b: Debug context visibility (temporary — remove after confirming)
+  # -------------------------------------------------------------------
+  debug-context:
+    needs: ci-passed
+    if: >-
+      always()
+      && inputs.caller-event-name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dump context values
+        run: |
+          echo "=== Inputs ==="
+          echo "caller-event-name: ${{ inputs.caller-event-name }}"
+          echo "caller-head-repo: ${{ inputs.caller-head-repo }}"
+          echo ""
+          echo "=== Top-level github context ==="
+          echo "github.repository: ${{ github.repository }}"
+          echo "github.event_name: ${{ github.event_name }}"
+          echo "github.head_ref: ${{ github.head_ref }}"
+          echo "github.base_ref: ${{ github.base_ref }}"
+          echo "github.ref: ${{ github.ref }}"
+          echo "github.ref_name: ${{ github.ref_name }}"
+          echo ""
+          echo "=== Shallow event properties ==="
+          echo "github.event.number: ${{ github.event.number }}"
+          echo "github.event.action: ${{ github.event.action }}"
+          echo ""
+          echo "=== Deeply nested event properties ==="
+          echo "github.event.pull_request.number: ${{ github.event.pull_request.number }}"
+          echo "github.event.pull_request.head.ref: ${{ github.event.pull_request.head.ref }}"
+          echo "github.event.pull_request.head.repo.full_name: ${{ github.event.pull_request.head.repo.full_name }}"
+          echo "github.event.pull_request.base.ref: ${{ github.event.pull_request.base.ref }}"
+          echo "github.event.pull_request.base.repo.full_name: ${{ github.event.pull_request.base.repo.full_name }}"
+          echo ""
+          echo "=== Condition evaluation ==="
+          echo "ci-passed result: ${{ needs.ci-passed.result }}"
+          echo "caller-head-repo == github.repository: ${{ inputs.caller-head-repo == github.repository }}"
+          echo "head_ref match: ${{ github.head_ref == 'automation/update-zutils-version' || github.head_ref == 'automation/update-nanvix-version' || github.head_ref == 'automation/update-nanvix-workflows' }}"
+          echo "OLD deep full_name == repository: ${{ github.event.pull_request.head.repo.full_name == github.repository }}"
+          echo "OLD deep head.ref match: ${{ github.event.pull_request.head.ref == 'automation/update-zutils-version' || github.event.pull_request.head.ref == 'automation/update-nanvix-version' || github.event.pull_request.head.ref == 'automation/update-nanvix-workflows' }}"
+
+  # -------------------------------------------------------------------
   # Job 7: Auto-merge automation PRs after CI passes
   # -------------------------------------------------------------------
   auto-merge:
@@ -505,16 +556,16 @@ jobs:
     if: >-
       needs.ci-passed.result == 'success'
       && inputs.caller-event-name == 'pull_request'
-      && github.event.pull_request.head.repo.full_name == github.repository
-      && (github.event.pull_request.head.ref == 'automation/update-zutils-version'
-          || github.event.pull_request.head.ref == 'automation/update-nanvix-version'
-          || github.event.pull_request.head.ref == 'automation/update-nanvix-workflows')
+      && inputs.caller-head-repo == github.repository
+      && (github.head_ref == 'automation/update-zutils-version'
+          || github.head_ref == 'automation/update-nanvix-version'
+          || github.head_ref == 'automation/update-nanvix-workflows')
     runs-on: ubuntu-latest
     steps:
       - name: Merge automation PR
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ github.event.number }}
           REPO: ${{ github.repository }}
         run: |
           echo "Merging automation PR #$PR_NUMBER on $REPO..."

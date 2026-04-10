@@ -99,6 +99,14 @@ jobs:
               [ -f "$FILE" ] || continue
               if grep -qE 'uses:[[:space:]]*nanvix/workflows/.+@v[^[:space:]#]+' "$FILE"; then
                 sed -i -E "s|(uses:[[:space:]]*nanvix/workflows/.+)@v[^[:space:]#]+|\1@${LATEST_TAG}|g" "$FILE"
+
+                # Inject caller-head-repo input if not already present.
+                # Required by the auto-merge job in the reusable workflow
+                # for fork protection (v1.7.1+).
+                if grep -q 'caller-event-name:' "$FILE" && ! grep -q 'caller-head-repo:' "$FILE"; then
+                  sed -i '/caller-event-name:/a\      caller-head-repo: ${{ github.event.pull_request.head.repo.full_name || '\'''\'' }}' "$FILE"
+                fi
+
                 if ! git diff --quiet -- "$FILE"; then
                   git add "$FILE"
                   CHANGED=1
