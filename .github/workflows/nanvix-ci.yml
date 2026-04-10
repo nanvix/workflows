@@ -578,6 +578,6 @@ jobs:
           fi
 
           echo "Merging automation PR #$PR_NUMBER on $REPO..."
-          gh pr merge "$PR_NUMBER" --repo "$REPO" --admin --delete-branch || {
+          gh pr merge "$PR_NUMBER" --repo "$REPO" --merge --admin --delete-branch || {
             echo "::warning::Auto-merge failed for PR #$PR_NUMBER"
           }
