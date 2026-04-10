@@ -59,15 +59,6 @@ on:
           reusable workflow always sees "workflow_call".
         required: true
         type: string
-      caller-head-repo:
-        description: >
-          github.event.pull_request.head.repo.full_name from the caller.
-          Used by the auto-merge job to verify the PR originates from the
-          same repository (fork protection). Pass an empty string for
-          non-pull_request events.
-        required: false
-        default: ""
-        type: string
       release-notes-extra:
         description: Extra markdown to append to the release notes.
         required: false
@@ -530,7 +521,6 @@ jobs:
         run: |
           echo "=== Inputs ==="
           echo "caller-event-name: ${{ inputs.caller-event-name }}"
-          echo "caller-head-repo: ${{ inputs.caller-head-repo }}"
           echo ""
           echo "=== Top-level github context ==="
           echo "github.repository: ${{ github.repository }}"
@@ -553,7 +543,6 @@ jobs:
           echo ""
           echo "=== Condition evaluation ==="
           echo "ci-passed result: ${{ needs.ci-passed.result }}"
-          echo "caller-head-repo == github.repository: ${{ inputs.caller-head-repo == github.repository }}"
           echo "head_ref match: $HEAD_REF_MATCH"
           echo "OLD deep full_name == repository: ${{ github.event.pull_request.head.repo.full_name == github.repository }}"
           echo "OLD deep head.ref match: $OLD_HEAD_REF_MATCH"
@@ -566,7 +555,6 @@ jobs:
     if: >-
       needs.ci-passed.result == 'success'
       && inputs.caller-event-name == 'pull_request'
-      && inputs.caller-head-repo == github.repository
       && (github.head_ref == 'automation/update-zutils-version'
           || github.head_ref == 'automation/update-nanvix-version'
           || github.head_ref == 'automation/update-nanvix-workflows')
@@ -578,6 +566,13 @@ jobs:
           PR_NUMBER: ${{ github.event.number }}
           REPO: ${{ github.repository }}
         run: |
+          # Fork protection: verify the PR head repo matches this repo.
+          HEAD_REPO=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRepositoryOwner,headRepository --jq '"\(.headRepositoryOwner.login)/\(.headRepository.name)"')
+          if [[ "$HEAD_REPO" != "$REPO" ]]; then
+            echo "::warning::PR #$PR_NUMBER head repo ($HEAD_REPO) does not match $REPO — skipping auto-merge"
+            exit 0
+          fi
+
           echo "Merging automation PR #$PR_NUMBER on $REPO..."
           gh pr merge "$PR_NUMBER" --repo "$REPO" --squash --delete-branch || {
             echo "::warning::Auto-merge failed for PR #$PR_NUMBER"
