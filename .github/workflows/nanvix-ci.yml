@@ -274,8 +274,10 @@ jobs:
             --description "Automated: CI workflow failure" \
             --color "D73A4A" 2>/dev/null || true
 
-          # Use the caller-supplied assignee list (defaults to "ppenna").
+          # Use the caller-supplied assignee list.
           ADMINS="$FAILURE_ASSIGNEES"
+          # Normalize: trim whitespace and strip leading @
+          ADMINS=$(echo "$ADMINS" | tr ',' '\n' | sed 's/^[[:space:]]*@\{0,1\}//; s/[[:space:]]*$//' | tr '\n' ',' | sed 's/,$//')
 
           # Build the occurrence entry for this failure.
           OCCURRENCE="| ${TIMESTAMP} | ${EVENT} | ${NANVIX_VER} | ${FAILED_JOBS} | [#${{ github.run_number }}](${RUN_URL}) | [\`${GITHUB_SHA::7}\`](${{ github.server_url }}/${REPO}/commit/${{ github.sha }}) |"
@@ -304,7 +306,7 @@ jobs:
               --body "$NEW_BODY"
 
             # Post a comment so GitHub sends notifications to assignees/subscribers.
-            printf -v COMMENT_BODY '🔴 **New CI failure recorded** (%s)\n\n| Trigger | Nanvix Version | Failed Jobs | Run |\n|---------|----------------|-------------|-----|\n| %s | %s | %s | [#${{ github.run_number }}](%s) |' \
+            printf -v COMMENT_BODY '🔴 **New CI failure recorded** (%s)\n\n- **Trigger:** %s\n- **Nanvix Version:** %s\n- **Failed Jobs:** %s\n- **Run:** [#${{ github.run_number }}](%s)' \
               "$TIMESTAMP" \
               "$EVENT" \
               "$NANVIX_VER" \
