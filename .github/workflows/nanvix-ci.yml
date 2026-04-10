@@ -517,6 +517,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Dump context values
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
+          REF_NAME: ${{ github.ref_name }}
+          EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          EVENT_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          EVENT_BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+          HEAD_REF_MATCH: ${{ github.head_ref == 'automation/update-zutils-version' || github.head_ref == 'automation/update-nanvix-version' || github.head_ref == 'automation/update-nanvix-workflows' }}
+          OLD_HEAD_REF_MATCH: ${{ github.event.pull_request.head.ref == 'automation/update-zutils-version' || github.event.pull_request.head.ref == 'automation/update-nanvix-version' || github.event.pull_request.head.ref == 'automation/update-nanvix-workflows' }}
         run: |
           echo "=== Inputs ==="
           echo "caller-event-name: ${{ inputs.caller-event-name }}"
@@ -525,10 +535,10 @@ jobs:
           echo "=== Top-level github context ==="
           echo "github.repository: ${{ github.repository }}"
           echo "github.event_name: ${{ github.event_name }}"
-          echo "github.head_ref: ${{ github.head_ref }}"
-          echo "github.base_ref: ${{ github.base_ref }}"
+          echo "github.head_ref: $HEAD_REF"
+          echo "github.base_ref: $BASE_REF"
           echo "github.ref: ${{ github.ref }}"
-          echo "github.ref_name: ${{ github.ref_name }}"
+          echo "github.ref_name: $REF_NAME"
           echo ""
           echo "=== Shallow event properties ==="
           echo "github.event.number: ${{ github.event.number }}"
@@ -536,17 +546,17 @@ jobs:
           echo ""
           echo "=== Deeply nested event properties ==="
           echo "github.event.pull_request.number: ${{ github.event.pull_request.number }}"
-          echo "github.event.pull_request.head.ref: ${{ github.event.pull_request.head.ref }}"
-          echo "github.event.pull_request.head.repo.full_name: ${{ github.event.pull_request.head.repo.full_name }}"
-          echo "github.event.pull_request.base.ref: ${{ github.event.pull_request.base.ref }}"
-          echo "github.event.pull_request.base.repo.full_name: ${{ github.event.pull_request.base.repo.full_name }}"
+          echo "github.event.pull_request.head.ref: $EVENT_HEAD_REF"
+          echo "github.event.pull_request.head.repo.full_name: $EVENT_HEAD_REPO"
+          echo "github.event.pull_request.base.ref: $EVENT_BASE_REF"
+          echo "github.event.pull_request.base.repo.full_name: $EVENT_BASE_REPO"
           echo ""
           echo "=== Condition evaluation ==="
           echo "ci-passed result: ${{ needs.ci-passed.result }}"
           echo "caller-head-repo == github.repository: ${{ inputs.caller-head-repo == github.repository }}"
-          echo "head_ref match: ${{ github.head_ref == 'automation/update-zutils-version' || github.head_ref == 'automation/update-nanvix-version' || github.head_ref == 'automation/update-nanvix-workflows' }}"
+          echo "head_ref match: $HEAD_REF_MATCH"
           echo "OLD deep full_name == repository: ${{ github.event.pull_request.head.repo.full_name == github.repository }}"
-          echo "OLD deep head.ref match: ${{ github.event.pull_request.head.ref == 'automation/update-zutils-version' || github.event.pull_request.head.ref == 'automation/update-nanvix-version' || github.event.pull_request.head.ref == 'automation/update-nanvix-workflows' }}"
+          echo "OLD deep head.ref match: $OLD_HEAD_REF_MATCH"
 
   # -------------------------------------------------------------------
   # Job 7: Auto-merge automation PRs after CI passes

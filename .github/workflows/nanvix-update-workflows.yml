@@ -104,7 +104,8 @@ jobs:
                 # Required by the auto-merge job in the reusable workflow
                 # for fork protection (v1.7.1+).
                 if grep -q 'caller-event-name:' "$FILE" && ! grep -q 'caller-head-repo:' "$FILE"; then
-                  sed -i '/caller-event-name:/a\      caller-head-repo: ${{ github.event.pull_request.head.repo.full_name || '\'''\'' }}' "$FILE"
+                  INJECT_LINE="      caller-head-repo: \${{ github.event.pull_request.head.repo.full_name || '' }}"
+                  sed -i "/caller-event-name:/a\\${INJECT_LINE}" "$FILE"
                 fi
 
                 if ! git diff --quiet -- "$FILE"; then
