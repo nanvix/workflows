@@ -79,8 +79,12 @@ on:
           and contents + pull-requests write (for the update-nanvix-version job).
         required: true
       DISPATCH_TOKEN:
-        description: Token with repo scope on downstream repos (for dispatches).
-        required: false
+        description: >
+          Token with repo scope and admin access on consumer repos.
+          Used for downstream dispatches, version update PRs, and
+          auto-merging automation PRs (requires admin to bypass
+          branch protection).
+        required: true
     outputs:
       package_name:
         description: Package name resolved from the manifest.
