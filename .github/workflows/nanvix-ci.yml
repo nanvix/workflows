@@ -451,3 +451,50 @@ jobs:
           LATEST_TAG: ${{ steps.latest.outputs.tag }}
           REPO: ${{ github.repository }}
         run: .nanvix-workflows/scripts/update-nanvix-version.sh
+
+  # -------------------------------------------------------------------
+  # Job 6: CI gate — single required status check for branch protection
+  # -------------------------------------------------------------------
+  ci-passed:
+    needs: [get-nanvix-info, build, release, update-nanvix-version]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check upstream results
+        run: |
+          for result in \
+            "${{ needs.get-nanvix-info.result }}" \
+            "${{ needs.build.result }}" \
+            "${{ needs.release.result }}" \
+            "${{ needs.update-nanvix-version.result }}"
+          do
+            if [[ "$result" == "failure" || "$result" == "cancelled" ]]; then
+              echo "Upstream job failed or was cancelled: $result"
+              exit 1
+            fi
+          done
+
+  # -------------------------------------------------------------------
+  # Job 7: Auto-merge automation PRs after CI passes
+  # -------------------------------------------------------------------
+  auto-merge:
+    needs: ci-passed
+    if: >-
+      needs.ci-passed.result == 'success'
+      && inputs.caller-event-name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && (github.event.pull_request.head.ref == 'automation/update-zutils-version'
+          || github.event.pull_request.head.ref == 'automation/update-nanvix-version'
+          || github.event.pull_request.head.ref == 'automation/update-nanvix-workflows')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge automation PR
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          echo "Merging automation PR #$PR_NUMBER on $REPO..."
+          gh pr merge "$PR_NUMBER" --repo "$REPO" --squash --delete-branch || {
+            echo "::warning::Auto-merge failed for PR #$PR_NUMBER"
+          }
