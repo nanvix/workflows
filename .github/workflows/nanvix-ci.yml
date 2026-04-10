@@ -567,7 +567,10 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           # Fork protection: verify the PR head repo matches this repo.
-          HEAD_REPO=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRepositoryOwner,headRepository --jq '"\(.headRepositoryOwner.login)/\(.headRepository.name)"')
+          if ! HEAD_REPO=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRepositoryOwner,headRepository --jq '"\(.headRepositoryOwner.login)/\(.headRepository.name)"') || [[ -z "$HEAD_REPO" ]]; then
+            echo "::error::Failed to resolve head repo for PR #$PR_NUMBER — aborting auto-merge"
+            exit 1
+          fi
           if [[ "$HEAD_REPO" != "$REPO" ]]; then
             echo "::warning::PR #$PR_NUMBER head repo ($HEAD_REPO) does not match $REPO — skipping auto-merge"
             exit 0
