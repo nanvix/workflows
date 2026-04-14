@@ -19,6 +19,11 @@ on:
         required: false
         default: '["hyperlight","microvm"]'
         type: string
+      target-archs:
+        description: JSON array of target architectures.
+        required: false
+        default: '["x86"]'
+        type: string
       process-modes:
         description: JSON array of deployment modes.
         required: false
@@ -148,11 +153,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        target-arch: ${{ fromJSON(inputs.target-archs) }}
         platform: ${{ fromJSON(inputs.platforms) }}
         process-mode: ${{ fromJSON(inputs.process-modes) }}
         memory: ${{ fromJSON(inputs.memory-sizes) }}
         exclude: ${{ fromJSON(inputs.matrix-exclude) }}
-    name: ${{ matrix.platform }}-${{ matrix.process-mode }}-${{ matrix.memory }}
+    name: ${{ matrix.target-arch }}-${{ matrix.platform }}-${{ matrix.process-mode }}-${{ matrix.memory }}
     container:
       image: nanvix/toolchain:latest-minimal
       options: --device /dev/kvm
@@ -160,6 +166,7 @@ jobs:
       run:
         shell: bash
     env:
+      NANVIX_TARGET: ${{ matrix.target-arch }}
       NANVIX_MACHINE: ${{ matrix.platform }}
       NANVIX_DEPLOYMENT_MODE: ${{ matrix.process-mode }}
       NANVIX_MEMORY_SIZE: ${{ matrix.memory }}
@@ -205,7 +212,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v5
         with:
-          name: ${{ needs.get-nanvix-info.outputs.package_name }}-${{ needs.get-nanvix-info.outputs.package_version }}-${{ matrix.platform }}-${{ matrix.process-mode }}-${{ matrix.memory }}
+          name: ${{ needs.get-nanvix-info.outputs.package_name }}-${{ needs.get-nanvix-info.outputs.package_version }}-${{ matrix.target-arch }}-${{ matrix.platform }}-${{ matrix.process-mode }}-${{ matrix.memory }}
           path: |
             dist/*.tar.bz2
             dist/*.zip
@@ -222,7 +229,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v5
         with:
-          name: failure-logs-${{ matrix.platform }}-${{ matrix.process-mode }}
+          name: failure-logs-${{ matrix.target-arch }}-${{ matrix.platform }}-${{ matrix.process-mode }}-${{ matrix.memory }}
           path: ci-logs/*
           if-no-files-found: warn
 
