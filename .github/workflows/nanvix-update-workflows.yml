@@ -14,14 +14,23 @@ on:
     tags:
       - "v*"
   schedule:
-    - cron: "0 2 * * *"
+    # Tier-to-repo mapping lives in tier-config.json.
+    - cron: "0 9 * * *"   # Tier 1
+    - cron: "0 10 * * *"  # Tier 2
+    - cron: "0 11 * * *"  # Tier 3
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: update-workflow-refs
+  group: >-
+    update-workflow-refs-${{
+      github.event.schedule == '0 9 * * *' && 'tier1' ||
+      github.event.schedule == '0 10 * * *' && 'tier2' ||
+      github.event.schedule == '0 11 * * *' && 'tier3' ||
+      'all'
+    }}
   cancel-in-progress: true
 
 jobs:
@@ -59,10 +68,18 @@ jobs:
           REPOS=$(jq -c '.' consumer-repos.json)
           echo "default_repos=$REPOS" >> "$GITHUB_OUTPUT"
 
+      - name: Select target repos
+        id: select-repos
+        env:
+          DEFAULT_REPOS: ${{ steps.latest.outputs.default_repos }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule || '' }}
+        run: bash scripts/select-tier-repos.sh
+
       - name: Update target repositories
         env:
           LATEST_TAG: ${{ steps.latest.outputs.tag }}
-          TARGET_REPOS: ${{ steps.latest.outputs.default_repos }}
+          TARGET_REPOS: ${{ steps.select-repos.outputs.repos }}
           DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
         run: |
           set -euo pipefail

@@ -2,9 +2,10 @@
 # Licensed under the MIT License.
 
 # This workflow syncs consumer repositories with the latest nanvix/zutils
-# release. It runs on a daily schedule (03:00 UTC), can be triggered
-# manually via workflow_dispatch, or called from another workflow (e.g.
-# the zutils release pipeline) via workflow_call with an explicit tag.
+# release. It runs on a tiered daily schedule (09:00/10:00/11:00 UTC) that
+# mirrors the consumer CI cascade, can be triggered manually via
+# workflow_dispatch, or called from another workflow (e.g. the zutils
+# release pipeline) via workflow_call with an explicit tag.
 # It resolves the latest release tag of nanvix/zutils (unless one is
 # provided), then iterates over each target repo:
 #   1. Updating `zutil-version: "vOLD"` to `"vLATEST"` in caller workflows.
@@ -18,7 +19,10 @@ name: Update Zutils Version
 
 on:
   schedule:
-    - cron: "0 3 * * *"
+    # Tier-to-repo mapping lives in tier-config.json.
+    - cron: "0 9 * * *"   # Tier 1
+    - cron: "0 10 * * *"  # Tier 2
+    - cron: "0 11 * * *"  # Tier 3
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -35,7 +39,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: update-zutils
+  group: >-
+    update-zutils-${{
+      github.event.schedule == '0 9 * * *' && 'tier1' ||
+      github.event.schedule == '0 10 * * *' && 'tier2' ||
+      github.event.schedule == '0 11 * * *' && 'tier3' ||
+      'all'
+    }}
   cancel-in-progress: true
 
 jobs:
@@ -78,6 +88,14 @@ jobs:
           REPOS=$(jq -c '.' consumer-repos.json)
           echo "default_repos=$REPOS" >> "$GITHUB_OUTPUT"
 
+      - name: Select target repos
+        id: select-repos
+        env:
+          DEFAULT_REPOS: ${{ steps.latest.outputs.default_repos }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule || '' }}
+        run: bash scripts/select-tier-repos.sh
+
       - name: Download bootstrapper templates
         id: templates
         run: |
@@ -109,7 +127,7 @@ jobs:
       - name: Update target repositories
         env:
           LATEST_TAG: ${{ steps.latest.outputs.tag }}
-          TARGET_REPOS: ${{ steps.latest.outputs.default_repos }}
+          TARGET_REPOS: ${{ steps.select-repos.outputs.repos }}
           TEMPLATES_DIR: ${{ steps.templates.outputs.dir }}
           DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
           NANVIX_VERSION: ${{ steps.nanvix.outputs.version }}

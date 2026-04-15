@@ -1,0 +1,30 @@
+{
+  "tiers": [
+    {
+      "name": "tier1",
+      "cron": "0 9 * * *",
+      "repos": [
+        "nanvix/zlib",
+        "nanvix/bzip2",
+        "nanvix/openssl",
+        "nanvix/quickjs",
+        "nanvix/libffi",
+        "nanvix/posix-tests"
+      ]
+    },
+    {
+      "name": "tier2",
+      "cron": "0 10 * * *",
+      "repos": [
+        "nanvix/sqlite"
+      ]
+    },
+    {
+      "name": "tier3",
+      "cron": "0 11 * * *",
+      "repos": [
+        "nanvix/cpython"
+      ]
+    }
+  ]
+}
