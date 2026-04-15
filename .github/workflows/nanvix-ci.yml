@@ -240,6 +240,7 @@ jobs:
     needs: [get-nanvix-info, build, release, update-nanvix-version]
     if: >-
       always() &&
+      inputs.caller-event-name != 'pull_request' &&
       (needs.build.result != 'success' && needs.build.result != 'skipped'
        || needs.release.result != 'success' && needs.release.result != 'skipped'
        || needs.update-nanvix-version.result != 'success' && needs.update-nanvix-version.result != 'skipped')
