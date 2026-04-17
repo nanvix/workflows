@@ -238,12 +238,14 @@ jobs:
   # -------------------------------------------------------------------
   report-failure:
     needs: [get-nanvix-info, build, release, update-nanvix-version]
+    # Only report true failures (not cancellations from higher-priority runs).
+    # The ci-passed gate intentionally still fails on cancelled for branch protection.
     if: >-
       always() &&
       inputs.caller-event-name != 'pull_request' &&
-      (needs.build.result != 'success' && needs.build.result != 'skipped'
-       || needs.release.result != 'success' && needs.release.result != 'skipped'
-       || needs.update-nanvix-version.result != 'success' && needs.update-nanvix-version.result != 'skipped')
+      (needs.build.result == 'failure'
+       || needs.release.result == 'failure'
+       || needs.update-nanvix-version.result == 'failure')
     runs-on: ubuntu-latest
     steps:
       - name: Identify failed jobs
@@ -257,7 +259,7 @@ jobs:
           do
             JOB="${pair%%:*}"
             RESULT="${pair#*:}"
-            if [[ "$RESULT" != "success" && "$RESULT" != "skipped" ]]; then
+            if [[ "$RESULT" == "failure" ]]; then
               FAILED="${FAILED:+$FAILED, }${JOB} (${RESULT})"
             fi
           done
