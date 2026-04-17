@@ -77,6 +77,14 @@ on:
         required: false
         default: "ppenna"
         type: string
+      failure-notify-team:
+        description: >
+          Org team slug to @-mention on CI failure issues (e.g. "admin").
+          The team is mentioned as @<org>/<slug> so all members are notified.
+          Set to empty string to disable team mentions.
+        required: false
+        default: "admin"
+        type: string
     secrets:
       GH_TOKEN:
         description: >
@@ -271,6 +279,8 @@ jobs:
           FAILED_JOBS: ${{ steps.failed.outputs.jobs }}
           FAILURE_ASSIGNEES: ${{ inputs.failure-assignees }}
           CALLER_EVENT: ${{ inputs.caller-event-name }}
+          ORG: ${{ github.repository_owner }}
+          TEAM_SLUG: ${{ inputs.failure-notify-team }}
         run: |
           set -euo pipefail
 
@@ -320,12 +330,17 @@ jobs:
               --body "$NEW_BODY"
 
             # Post a comment so GitHub sends notifications to assignees/subscribers.
-            printf -v COMMENT_BODY '🔴 **New CI failure recorded** (%s)\n\n- **Trigger:** %s\n- **Nanvix Version:** %s\n- **Failed Jobs:** %s\n- **Run:** [#${{ github.run_number }}](%s)' \
+            TEAM_CC=""
+            if [[ -n "$TEAM_SLUG" ]]; then
+              printf -v TEAM_CC '\n\ncc @%s/%s' "$ORG" "$TEAM_SLUG"
+            fi
+            printf -v COMMENT_BODY '🔴 **New CI failure recorded** (%s)\n\n- **Trigger:** %s\n- **Nanvix Version:** %s\n- **Failed Jobs:** %s\n- **Run:** [#${{ github.run_number }}](%s)%s' \
               "$TIMESTAMP" \
               "$EVENT" \
               "$NANVIX_VER" \
               "$FAILED_JOBS" \
-              "$RUN_URL"
+              "$RUN_URL" \
+              "$TEAM_CC"
             gh issue comment "$ISSUE_NUM" \
               --repo "$REPO" \
               --body "$COMMENT_BODY"
@@ -334,12 +349,17 @@ jobs:
             exit 0
           fi
 
-          printf -v BODY '## CI Workflow Failure\n\n**Repository:** %s\n**Branch:** %s\n\n### Occurrences\n\n%s\n%s\n%s' \
+          TEAM_CC=""
+          if [[ -n "$TEAM_SLUG" ]]; then
+            printf -v TEAM_CC '\n\ncc @%s/%s' "$ORG" "$TEAM_SLUG"
+          fi
+          printf -v BODY '## CI Workflow Failure\n\n**Repository:** %s\n**Branch:** %s\n\n### Occurrences\n\n%s\n%s\n%s%s' \
             "$REPO" \
             "${{ github.ref_name }}" \
             "$HEADER" \
             "$SEPARATOR" \
-            "$OCCURRENCE"
+            "$OCCURRENCE" \
+            "$TEAM_CC"
 
           ASSIGNEE_ARGS=()
           if [[ -n "$ADMINS" ]]; then
