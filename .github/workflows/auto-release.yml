@@ -1,0 +1,116 @@
+# Copyright(c) The Maintainers of Nanvix.
+# Licensed under the MIT License.
+
+# Automatically creates a GitHub release with a bumped version tag whenever a
+# commit is pushed to main (e.g. when a pull request is merged). The version
+# component to bump is determined by labels on the merged pull request:
+#   - "major" label → bumps major (e.g. v1.10.0 → v2.0.0)
+#   - "minor" label → bumps minor (e.g. v1.10.0 → v1.11.0)
+#   - default       → bumps patch (e.g. v1.10.0 → v1.10.1)
+#
+# The new tag also triggers the Update Workflow Refs workflow, which propagates
+# the version to consumer repositories.
+
+name: Auto Release
+
+on:
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Create release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Resolve latest semver tag
+        id: current
+        run: |
+          set -euo pipefail
+          TAG=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' \
+            | sort -V \
+            | tail -1)
+          if [ -z "$TAG" ]; then
+            TAG="v0.0.0"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Current tag: $TAG"
+
+      - name: Determine version bump
+        id: bump
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT_TAG: ${{ steps.current.outputs.tag }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          set -euo pipefail
+
+          # Strip leading 'v' and split into components.
+          VERSION="${CURRENT_TAG#v}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+
+          # Extract PR number from merge commit message.
+          PR_NUMBER=""
+          if [[ "$COMMIT_MSG" =~ Merge\ pull\ request\ \#([0-9]+) ]]; then
+            PR_NUMBER="${BASH_REMATCH[1]}"
+          fi
+          echo "PR number: ${PR_NUMBER:-none}"
+
+          # Check PR labels to decide bump level.
+          BUMP="patch"
+          if [ -n "$PR_NUMBER" ]; then
+            LABELS=$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}" \
+              --jq '[.labels[].name] | map(ascii_downcase) | join(",")' 2>/dev/null || true)
+            echo "PR labels: ${LABELS:-none}"
+            if echo "$LABELS" | grep -qw "major"; then
+              BUMP="major"
+            elif echo "$LABELS" | grep -qw "minor"; then
+              BUMP="minor"
+            fi
+          fi
+
+          case "$BUMP" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+
+          NEW_TAG="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
+          echo "new_tag=$NEW_TAG" >> "$GITHUB_OUTPUT"
+          echo "Bump: $BUMP -> $NEW_TAG"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN || github.token }}
+          NEW_TAG: ${{ steps.bump.outputs.new_tag }}
+          PREV_TAG: ${{ steps.current.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release create "$NEW_TAG" \
+            --title "$NEW_TAG" \
+            --generate-notes \
+            --notes-start-tag "$PREV_TAG" \
+            --target "${{ github.sha }}"
+          echo "Created release: $NEW_TAG"
+
+      - name: Summary
+        run: |
+          {
+            echo "## Auto Release"
+            echo ""
+            echo "**Previous tag:** \`${{ steps.current.outputs.tag }}\`"
+            echo "**New tag:** \`${{ steps.bump.outputs.new_tag }}\`"
+            echo "**Bump:** ${{ steps.bump.outputs.bump }}"
+          } >> "$GITHUB_STEP_SUMMARY"
