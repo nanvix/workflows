@@ -85,6 +85,15 @@ on:
         required: false
         default: "admin"
         type: string
+      windows-test:
+        description: >
+          Run a Windows test job on windows-latest after the Linux build.
+          Delegates to the consumer's ./z setup + ./z test. Only runs
+          when the process-modes input includes "standalone" (required
+          for Windows — multi-process needs linuxd which is Linux-only).
+        required: false
+        default: true
+        type: boolean
     secrets:
       GH_TOKEN:
         description: >
@@ -242,10 +251,62 @@ jobs:
           if-no-files-found: warn
 
   # -------------------------------------------------------------------
-  # Job 3: Open a GitHub issue on any job failure
+  # Job 3: Windows smoke test
+  #
+  # Runs when the process-modes input includes "standalone" (required
+  # for Windows — multi-process needs linuxd which is Linux-only).
+  # Generic: delegates to the consumer's ./z setup + ./z test, just
+  # like the Linux build job.
+  # -------------------------------------------------------------------
+  windows-test:
+    needs: [get-nanvix-info, build]
+    if: >-
+      inputs.windows-test
+      && contains(fromJSON(inputs.process-modes), 'standalone')
+      && !cancelled()
+      && needs.build.result == 'success'
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(inputs.platforms) }}
+        memory: ${{ fromJSON(inputs.memory-sizes) }}
+    name: windows-test (${{ matrix.platform }}-${{ matrix.memory }})
+    env:
+      NANVIX_MACHINE: ${{ matrix.platform }}
+      NANVIX_DEPLOYMENT_MODE: standalone
+      NANVIX_MEMORY_SIZE: ${{ matrix.memory }}
+      NANVIX_VERSION: ${{ needs.get-nanvix-info.outputs.nanvix_tag }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install nanvix-zutil
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          NANVIX_ZUTIL_VERSION: ${{ inputs.zutil-version }}
+        shell: pwsh
+        run: |
+          $wheel = gh api "repos/nanvix/zutils/releases/tags/$env:NANVIX_ZUTIL_VERSION" `
+            --jq '.assets[] | select(.name | endswith(\".whl\")) | .browser_download_url'
+          python -m pip install $wheel
+
+      - name: Setup (downloads Windows host binaries)
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        shell: pwsh
+        run: nanvix-zutil setup
+
+      - name: Test
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        shell: pwsh
+        run: nanvix-zutil test
+
+  # -------------------------------------------------------------------
+  # Job 4: Open a GitHub issue on any job failure
   # -------------------------------------------------------------------
   report-failure:
-    needs: [get-nanvix-info, build, release, update-nanvix-version]
+    needs: [get-nanvix-info, build, release, update-nanvix-version, windows-test]
     # Only report true failures (not cancellations from higher-priority runs).
     # The ci-passed gate intentionally still fails on cancelled for branch protection.
     if: >-
@@ -513,7 +574,7 @@ jobs:
   # Job 6: CI gate — single required status check for branch protection
   # -------------------------------------------------------------------
   ci-passed:
-    needs: [get-nanvix-info, build, release, update-nanvix-version]
+    needs: [get-nanvix-info, build, release, update-nanvix-version, windows-test]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -530,6 +591,12 @@ jobs:
               exit 1
             fi
           done
+          # windows-test is opt-in — only fail if it ran and failed.
+          WIN_RESULT="${{ needs.windows-test.result }}"
+          if [[ "$WIN_RESULT" == "failure" ]]; then
+            echo "windows-test failed"
+            exit 1
+          fi
 
   # -------------------------------------------------------------------
   # Job 6b: Debug context visibility (temporary — remove after confirming)
