@@ -215,10 +215,14 @@ jobs:
 
       - name: Test
         if: ${{ !contains(fromJSON(inputs.skip-full-test-modes), matrix.process-mode) }}
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: ./z test
 
       - name: Test (limited)
         if: ${{ contains(fromJSON(inputs.skip-full-test-modes), matrix.process-mode) }}
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: ./z test -- ${{ inputs.standalone-test-args }}
 
       - name: Release
@@ -286,8 +290,8 @@ jobs:
           NANVIX_ZUTIL_VERSION: ${{ inputs.zutil-version }}
         shell: pwsh
         run: |
-          $wheel = gh api "repos/nanvix/zutils/releases/tags/$env:NANVIX_ZUTIL_VERSION" `
-            --jq '.assets[] | select(.name | endswith(\".whl\")) | .browser_download_url'
+          $jq = '.assets[] | select(.name | endswith(".whl")) | .browser_download_url'
+          $wheel = gh api "repos/nanvix/zutils/releases/tags/$env:NANVIX_ZUTIL_VERSION" --jq $jq
           python -m pip install $wheel
 
       - name: Setup (downloads Windows host binaries)
