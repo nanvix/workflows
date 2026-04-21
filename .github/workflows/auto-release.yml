@@ -71,11 +71,14 @@ jobs:
           BUMP="patch"
           if [ -n "$PR_NUMBER" ]; then
             LABELS=$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}" \
-              --jq '[.labels[].name] | map(ascii_downcase) | join(",")' 2>/dev/null || true)
-            echo "PR labels: ${LABELS:-none}"
-            if echo "$LABELS" | grep -qw "major"; then
+              --jq '[.labels[].name] | map(ascii_downcase)' 2>/dev/null) || {
+              echo "::warning::Could not fetch labels for PR #${PR_NUMBER}; defaulting to patch bump."
+              LABELS="[]"
+            }
+            echo "PR labels: $LABELS"
+            if echo "$LABELS" | jq -e 'index("major")' > /dev/null 2>&1; then
               BUMP="major"
-            elif echo "$LABELS" | grep -qw "minor"; then
+            elif echo "$LABELS" | jq -e 'index("minor")' > /dev/null 2>&1; then
               BUMP="minor"
             fi
           fi
