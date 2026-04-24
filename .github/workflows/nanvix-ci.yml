@@ -96,12 +96,10 @@ on:
         type: boolean
       windows-build:
         description: >
-          Run the consumer's build hook (nanvix-zutil build) on the
-          Windows runner before testing. Requires Docker Desktop on the
-          runner (use windows-runner to specify a self-hosted runner with
-          Docker Desktop installed). When enabled, the build populates
-          local artifacts so tests use a freshly built binary instead of
-          downloading a release.
+          Build on Windows via Docker Desktop before testing. Requires a
+          self-hosted runner with Docker Desktop (see windows-runner).
+          When false (default), Windows tests use ELF binaries built by
+          the Linux build job, transferred via GitHub Actions artifacts.
         required: false
         default: false
         type: boolean
@@ -261,6 +259,16 @@ jobs:
             dist/*.zip
           retention-days: 7
 
+      - name: Upload ELF binaries for Windows test
+        if: success() && inputs.windows-test && matrix.process-mode == 'standalone'
+        uses: actions/upload-artifact@v5
+        with:
+          name: windows-test-build-${{ matrix.platform }}-${{ matrix.memory }}
+          path: |
+            **/*.elf
+          retention-days: 1
+          if-no-files-found: warn
+
       - name: Collect failure logs
         if: failure()
         run: |
@@ -321,6 +329,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         shell: pwsh
         run: nanvix-zutil setup
+
+      - name: Download Linux build output
+        if: ${{ !inputs.windows-build }}
+        uses: actions/download-artifact@v5
+        with:
+          name: windows-test-build-${{ matrix.platform }}-${{ matrix.memory }}
 
       - name: Switch Docker to Linux containers
         if: inputs.windows-build
