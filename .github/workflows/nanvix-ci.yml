@@ -310,6 +310,13 @@ jobs:
         shell: pwsh
         run: nanvix-zutil setup
 
+      - name: Switch Docker to Linux containers
+        if: inputs.windows-build
+        shell: pwsh
+        run: |
+          & 'C:\Program Files\Docker\Docker\DockerCli.exe' -SwitchLinuxEngine
+          docker info
+
       - name: Build (cross-compile via Docker)
         if: inputs.windows-build
         env:
