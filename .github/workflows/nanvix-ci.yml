@@ -94,6 +94,16 @@ on:
         required: false
         default: true
         type: boolean
+      windows-build:
+        description: >
+          Run the consumer's build hook (nanvix-zutil build) on the
+          Windows runner before testing. Requires the consumer repo to
+          support cross-compilation on Windows via Docker (e.g. cpython).
+          When enabled, the build populates local artifacts so tests use
+          a freshly built binary instead of downloading a release.
+        required: false
+        default: false
+        type: boolean
     secrets:
       GH_TOKEN:
         description: >
@@ -299,6 +309,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         shell: pwsh
         run: nanvix-zutil setup
+
+      - name: Build (cross-compile via Docker)
+        if: inputs.windows-build
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        shell: pwsh
+        run: nanvix-zutil build
 
       - name: Test
         env:
