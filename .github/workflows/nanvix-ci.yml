@@ -87,8 +87,8 @@ on:
         type: string
       windows-test:
         description: >
-          Run a Windows test job on windows-latest after the Linux build.
-          Delegates to the consumer's ./z setup + ./z test. Only runs
+          Run a Windows test job after the Linux build. Delegates to
+          nanvix-zutil setup + test (and optionally build). Only runs
           when the process-modes input includes "standalone" (required
           for Windows — multi-process needs linuxd which is Linux-only).
         required: false
@@ -96,14 +96,21 @@ on:
         type: boolean
       windows-build:
         description: >
-          Run the consumer's build hook (nanvix-zutil build) on the
-          Windows runner before testing. Requires the consumer repo to
-          support cross-compilation on Windows via Docker (e.g. cpython).
-          When enabled, the build populates local artifacts so tests use
-          a freshly built binary instead of downloading a release.
+          Build on Windows via Docker Desktop before testing. Requires a
+          self-hosted runner with Docker Desktop (see windows-runner).
+          When false (default), Windows tests use ELF binaries built by
+          the Linux build job, transferred via GitHub Actions artifacts.
         required: false
         default: false
         type: boolean
+      windows-runner:
+        description: >
+          Runner label(s) for Windows jobs. Use a JSON string for
+          self-hosted runners with Docker Desktop (e.g.
+          '["self-hosted","Windows"]'). Default: '"windows-latest"'.
+        required: false
+        default: '"windows-latest"'
+        type: string
     secrets:
       GH_TOKEN:
         description: >
@@ -186,9 +193,6 @@ jobs:
         memory: ${{ fromJSON(inputs.memory-sizes) }}
         exclude: ${{ fromJSON(inputs.matrix-exclude) }}
     name: ${{ matrix.target-arch }}-${{ matrix.platform }}-${{ matrix.process-mode }}-${{ matrix.memory }}
-    container:
-      image: nanvix/toolchain:latest-minimal
-      options: --device /dev/kvm
     defaults:
       run:
         shell: bash
@@ -198,13 +202,16 @@ jobs:
       NANVIX_DEPLOYMENT_MODE: ${{ matrix.process-mode }}
       NANVIX_MEMORY_SIZE: ${{ matrix.memory }}
       NANVIX_VERSION: ${{ needs.get-nanvix-info.outputs.nanvix_tag }}
-      USER: runner
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install gh CLI and pip
+      - name: Enable KVM
         run: |
-          apt-get update -qq && apt-get install -y -qq gh python3-pip
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
 
       - name: Install nanvix-zutil
         env:
@@ -215,29 +222,32 @@ jobs:
             --jq '.assets[] | select(.name | endswith(".whl")) | .browser_download_url')
           python3 -m pip install --break-system-packages "$WHEEL_URL"
 
-      - name: Setup
+      - name: Pull Docker image
+        run: docker pull nanvix/toolchain:latest-minimal
+
+      - name: Setup (with Docker)
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: ./z setup
+        run: nanvix-zutil setup --with-docker
 
-      - name: Build
-        run: ./z build
+      - name: Build (in Docker)
+        run: nanvix-zutil build
 
       - name: Test
         if: ${{ !contains(fromJSON(inputs.skip-full-test-modes), matrix.process-mode) }}
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: ./z test
+        run: nanvix-zutil test
 
       - name: Test (limited)
         if: ${{ contains(fromJSON(inputs.skip-full-test-modes), matrix.process-mode) }}
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: ./z test -- ${{ inputs.standalone-test-args }}
+        run: nanvix-zutil test -- ${{ inputs.standalone-test-args }}
 
       - name: Release
         if: success()
-        run: ./z release
+        run: nanvix-zutil release
 
       - name: Upload build artifacts
         if: success()
@@ -248,6 +258,16 @@ jobs:
             dist/*.tar.bz2
             dist/*.zip
           retention-days: 7
+
+      - name: Upload ELF binaries for Windows test
+        if: success() && inputs.windows-test && matrix.process-mode == 'standalone'
+        uses: actions/upload-artifact@v5
+        with:
+          name: windows-test-build-${{ matrix.platform }}-${{ matrix.memory }}
+          path: |
+            **/*.elf
+          retention-days: 1
+          if-no-files-found: warn
 
       - name: Collect failure logs
         if: failure()
@@ -279,7 +299,7 @@ jobs:
       && contains(fromJSON(inputs.process-modes), 'standalone')
       && !cancelled()
       && needs.build.result == 'success'
-    runs-on: windows-latest
+    runs-on: ${{ fromJSON(inputs.windows-runner) }}
     strategy:
       fail-fast: false
       matrix:
@@ -310,12 +330,23 @@ jobs:
         shell: pwsh
         run: nanvix-zutil setup
 
+      - name: Download Linux build output
+        if: ${{ !inputs.windows-build }}
+        uses: actions/download-artifact@v5
+        with:
+          name: windows-test-build-${{ matrix.platform }}-${{ matrix.memory }}
+
       - name: Switch Docker to Linux containers
         if: inputs.windows-build
         shell: pwsh
         run: |
           & 'C:\Program Files\Docker\Docker\DockerCli.exe' -SwitchLinuxEngine
           docker info
+
+      - name: Pull Docker image
+        if: inputs.windows-build
+        shell: pwsh
+        run: docker pull nanvix/toolchain:latest-minimal
 
       - name: Build (cross-compile via Docker)
         if: inputs.windows-build
@@ -625,56 +656,6 @@ jobs:
             echo "windows-test failed"
             exit 1
           fi
-
-  # -------------------------------------------------------------------
-  # Job 6b: Debug context visibility (temporary — remove after confirming)
-  # -------------------------------------------------------------------
-  debug-context:
-    needs: ci-passed
-    if: >-
-      always()
-      && inputs.caller-event-name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Dump context values
-        env:
-          HEAD_REF: ${{ github.head_ref }}
-          BASE_REF: ${{ github.base_ref }}
-          REF_NAME: ${{ github.ref_name }}
-          EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
-          EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          EVENT_BASE_REF: ${{ github.event.pull_request.base.ref }}
-          EVENT_BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
-          HEAD_REF_MATCH: ${{ github.head_ref == 'automation/update-zutils-version' || github.head_ref == 'automation/update-nanvix-version' || github.head_ref == 'automation/update-nanvix-workflows' }}
-          OLD_HEAD_REF_MATCH: ${{ github.event.pull_request.head.ref == 'automation/update-zutils-version' || github.event.pull_request.head.ref == 'automation/update-nanvix-version' || github.event.pull_request.head.ref == 'automation/update-nanvix-workflows' }}
-        run: |
-          echo "=== Inputs ==="
-          echo "caller-event-name: ${{ inputs.caller-event-name }}"
-          echo ""
-          echo "=== Top-level github context ==="
-          echo "github.repository: ${{ github.repository }}"
-          echo "github.event_name: ${{ github.event_name }}"
-          echo "github.head_ref: $HEAD_REF"
-          echo "github.base_ref: $BASE_REF"
-          echo "github.ref: ${{ github.ref }}"
-          echo "github.ref_name: $REF_NAME"
-          echo ""
-          echo "=== Shallow event properties ==="
-          echo "github.event.number: ${{ github.event.number }}"
-          echo "github.event.action: ${{ github.event.action }}"
-          echo ""
-          echo "=== Deeply nested event properties ==="
-          echo "github.event.pull_request.number: ${{ github.event.pull_request.number }}"
-          echo "github.event.pull_request.head.ref: $EVENT_HEAD_REF"
-          echo "github.event.pull_request.head.repo.full_name: $EVENT_HEAD_REPO"
-          echo "github.event.pull_request.base.ref: $EVENT_BASE_REF"
-          echo "github.event.pull_request.base.repo.full_name: $EVENT_BASE_REPO"
-          echo ""
-          echo "=== Condition evaluation ==="
-          echo "ci-passed result: ${{ needs.ci-passed.result }}"
-          echo "head_ref match: $HEAD_REF_MATCH"
-          echo "OLD deep full_name == repository: ${{ github.event.pull_request.head.repo.full_name == github.repository }}"
-          echo "OLD deep head.ref match: $OLD_HEAD_REF_MATCH"
 
   # -------------------------------------------------------------------
   # Job 7: Auto-merge automation PRs after CI passes
