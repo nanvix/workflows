@@ -103,6 +103,13 @@ on:
         required: false
         default: false
         type: boolean
+      windows-matrix-exclude:
+        description: >
+          JSON array of {platform, memory} objects to exclude from the
+          Windows test matrix. Example: [{"platform":"hyperlight","memory":"256mb"}]
+        required: false
+        default: "[]"
+        type: string
       windows-runner:
         description: >
           Runner label(s) for Windows jobs. Use a JSON string for
@@ -305,6 +312,7 @@ jobs:
       matrix:
         platform: ${{ fromJSON(inputs.platforms) }}
         memory: ${{ fromJSON(inputs.memory-sizes) }}
+        exclude: ${{ fromJSON(inputs.windows-matrix-exclude) }}
     name: windows-test (${{ matrix.platform }}-${{ matrix.memory }})
     env:
       NANVIX_MACHINE: ${{ matrix.platform }}
