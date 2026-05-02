@@ -6,5 +6,6 @@
   "nanvix/openssl",
   "nanvix/cpython",
   "nanvix/quickjs",
-  "nanvix/posix-tests"
+  "nanvix/posix-tests",
+  "nanvix/nanvix-python"
 ]

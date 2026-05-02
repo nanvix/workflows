@@ -15,9 +15,10 @@ on:
       - "v*"
   schedule:
     # Tier-to-repo mapping lives in tier-config.json.
-    - cron: "0 9 * * *"   # Tier 1
-    - cron: "0 10 * * *"  # Tier 2
-    - cron: "0 11 * * *"  # Tier 3
+    - cron: "0 9 * * *" # Tier 1
+    - cron: "0 10 * * *" # Tier 2
+    - cron: "0 11 * * *" # Tier 3
+    - cron: "0 12 * * *" # Tier 4
   workflow_dispatch:
 
 permissions:
@@ -29,6 +30,7 @@ concurrency:
       github.event.schedule == '0 9 * * *' && 'tier1' ||
       github.event.schedule == '0 10 * * *' && 'tier2' ||
       github.event.schedule == '0 11 * * *' && 'tier3' ||
+      github.event.schedule == '0 12 * * *' && 'tier4' ||
       'all'
     }}
   cancel-in-progress: true

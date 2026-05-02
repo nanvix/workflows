@@ -25,6 +25,13 @@
       "repos": [
         "nanvix/cpython"
       ]
+    },
+    {
+      "name": "tier4",
+      "cron": "0 12 * * *",
+      "repos": [
+        "nanvix/nanvix-python"
+      ]
     }
   ]
 }
