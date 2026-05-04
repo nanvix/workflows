@@ -207,11 +207,11 @@ jobs:
 
       - name: Check Python formatting (black)
         if: inputs.python-paths != ''
-        run: uvx black==25.1.0 --check --config .nanvix/black.toml ${{ inputs.python-paths }}
+        run: uvx black@26.3.1 --check --config .nanvix/black.toml ${{ inputs.python-paths }}
 
       - name: Type check (pyright)
         if: inputs.python-paths != ''
-        run: uvx pyright==1.1.400 --project .nanvix/pyrightconfig.json
+        run: uvx pyright@1.1.400 --project .nanvix/pyrightconfig.json
 
       - name: Check shell formatting (shfmt)
         if: inputs.shell-paths != ''
@@ -222,7 +222,7 @@ jobs:
         run: shellcheck ${{ inputs.shell-paths }}
 
       - name: Lint YAML files (yamllint)
-        run: uvx yamllint==1.37.0 -c .nanvix/.yamllint.yml .github/workflows/
+        run: uvx yamllint@1.37.0 -c .nanvix/.yamllint.yml .github/workflows/
 
   # -------------------------------------------------------------------
   # Job 1: Resolve Nanvix release metadata via nanvix-zutil
