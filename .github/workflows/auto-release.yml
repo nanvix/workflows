@@ -1,0 +1,101 @@
+# Copyright(c) The Maintainers of Nanvix.
+# Licensed under the MIT License.
+
+# Automatically creates a semver tag and GitHub Release on every merge to
+# main that touches consumer-facing files. The new tag triggers the existing
+# nanvix-update-workflows.yml to propagate the version bump to consumer repos.
+#
+# Version bump rules (based on the HEAD commit message):
+#   - Default: patch (v1.14.0 -> v1.14.1)
+#   - If the commit message contains "[minor]": minor (v1.14.1 -> v1.15.0)
+#   - If the commit message contains "[major]": major (v1.15.0 -> v2.0.0)
+
+name: Auto Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - "scripts/**"
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check if HEAD is already tagged
+        id: check
+        run: |
+          set -euo pipefail
+          if git tag --points-at HEAD | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "HEAD is already tagged — skipping release."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve latest semver tag
+        if: steps.check.outputs.skip != 'true'
+        id: latest
+        run: |
+          set -euo pipefail
+          TAG=$(gh api repos/${{ github.repository }}/tags --paginate --jq '.[].name' \
+            | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } \
+            | sort -V \
+            | tail -1)
+          if [ -z "$TAG" ]; then
+            echo "::error::Could not resolve latest semver tag"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Resolved latest tag: $TAG"
+        env:
+          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+
+      - name: Compute next version
+        if: steps.check.outputs.skip != 'true'
+        id: next
+        run: |
+          set -euo pipefail
+          CURRENT="${{ steps.latest.outputs.tag }}"
+          # Strip leading 'v'
+          VERSION="${CURRENT#v}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+
+          MSG=$(git log -1 --format=%B)
+          if echo "$MSG" | grep -qi '\[major\]'; then
+            MAJOR=$((MAJOR + 1))
+            MINOR=0
+            PATCH=0
+          elif echo "$MSG" | grep -qi '\[minor\]'; then
+            MINOR=$((MINOR + 1))
+            PATCH=0
+          else
+            PATCH=$((PATCH + 1))
+          fi
+
+          NEXT="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "version=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "Next version: $NEXT"
+
+      - name: Create release
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          gh release create "${{ steps.next.outputs.version }}" \
+            --title "${{ steps.next.outputs.version }}" \
+            --target "${{ github.sha }}" \
+            --generate-notes \
+            --notes-start-tag "${{ steps.latest.outputs.tag }}"
+        env:
+          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
