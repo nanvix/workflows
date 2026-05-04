@@ -7,5 +7,6 @@
   "nanvix/cpython",
   "nanvix/quickjs",
   "nanvix/posix-tests",
-  "nanvix/nanvix-python"
+  "nanvix/nanvix-python",
+  "nanvix/xz"
 ]
