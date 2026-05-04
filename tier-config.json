@@ -9,6 +9,9 @@
         "nanvix/openssl",
         "nanvix/quickjs",
         "nanvix/libffi",
+        "nanvix/libxml2",
+        "nanvix/libxslt",
+        "nanvix/lxml",
         "nanvix/posix-tests",
         "nanvix/xz"
       ]
