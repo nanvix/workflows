@@ -60,7 +60,7 @@ jobs:
       BOOTSTRAPPER_TEMPLATES: "z z.sh z.ps1"
     steps:
       - name: Checkout workflows repo
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           repository: nanvix/workflows
           # No explicit ref — actions/checkout uses the default branch
