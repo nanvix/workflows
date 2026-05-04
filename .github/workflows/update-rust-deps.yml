@@ -131,7 +131,7 @@ jobs:
 
       - name: Open Pull Request
         if: ${{ steps.patched-crates.outputs.specs != '' }}
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.automation-token }}
           base: ${{ inputs.base-branch }}
