@@ -193,6 +193,33 @@ jobs:
           echo "${SHFMT_SHA256}  /tmp/shfmt" | sha256sum -c -
           sudo install -m 755 /tmp/shfmt /usr/local/bin/shfmt
 
+      - name: Generate lint configs
+        run: |
+          mkdir -p .nanvix
+          cat > .nanvix/black.toml << 'TOML'
+          [tool.black]
+          line-length = 88
+          target-version = ["py312"]
+          TOML
+          cat > .nanvix/.yamllint.yml << 'YAML'
+          extends: default
+          rules:
+            line-length:
+              max: 120
+            truthy:
+              check-keys: false
+            document-start: disable
+          YAML
+          cat > .nanvix/pyrightconfig.json << 'JSON'
+          {
+            "pythonVersion": "3.12",
+            "typeCheckingMode": "strict",
+            "include": ["."],
+            "venvPath": ".",
+            "venv": "venv"
+          }
+          JSON
+
       - name: Bootstrap .nanvix/venv with nanvix-zutil
         if: inputs.python-paths != ''
         env:
