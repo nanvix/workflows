@@ -132,6 +132,13 @@ on:
         required: false
         type: string
         default: "z z.sh"
+      yaml-paths:
+        description: >
+          Space-separated YAML file or directory paths to lint with yamllint.
+          Defaults to the nanvix-ci workflow file only.
+        required: false
+        type: string
+        default: ".github/workflows/nanvix-ci.yml"
     secrets:
       GH_TOKEN:
         description: >
@@ -249,7 +256,8 @@ jobs:
         run: shellcheck ${{ inputs.shell-paths }}
 
       - name: Lint YAML files (yamllint)
-        run: uvx yamllint@1.37.0 -c .nanvix/.yamllint.yml .github/workflows/
+        if: inputs.yaml-paths != ''
+        run: uvx yamllint@1.37.0 -c .nanvix/.yamllint.yml ${{ inputs.yaml-paths }}
 
   # -------------------------------------------------------------------
   # Job 1: Resolve Nanvix release metadata via nanvix-zutil
