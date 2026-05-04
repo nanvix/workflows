@@ -118,6 +118,20 @@ on:
         required: false
         default: '"windows-latest"'
         type: string
+      python-paths:
+        description: >
+          Space-separated Python paths to format-check with black.
+          Set to empty string to skip Python format/lint checks.
+        required: false
+        type: string
+        default: ".nanvix/z.py"
+      shell-paths:
+        description: >
+          Space-separated shell script paths to check with shfmt and shellcheck.
+          Set to empty string to skip shell checks.
+        required: false
+        type: string
+        default: "z z.sh"
     secrets:
       GH_TOKEN:
         description: >
@@ -155,6 +169,61 @@ permissions:
   pull-requests: write
 
 jobs:
+  # -------------------------------------------------------------------
+  # Job 0: Format & Lint — Python, shell, and YAML checks
+  # -------------------------------------------------------------------
+  format-and-lint:
+    name: Format & Lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install shfmt
+        if: inputs.shell-paths != ''
+        run: |
+          set -euxo pipefail
+          SHFMT_VERSION="v3.13.0"
+          SHFMT_SHA256="70aa99784703a8d6569bbf0b1e43e1a91906a4166bf1a79de42050a6d0de7551"
+          curl -fsSL "https://github.com/mvdan/sh/releases/download/${SHFMT_VERSION}/shfmt_${SHFMT_VERSION}_linux_amd64" -o /tmp/shfmt
+          echo "${SHFMT_SHA256}  /tmp/shfmt" | sha256sum -c -
+          sudo install -m 755 /tmp/shfmt /usr/local/bin/shfmt
+
+      - name: Bootstrap .nanvix/venv with nanvix-zutil
+        if: inputs.python-paths != ''
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.zutil-version }}"
+          uv venv .nanvix/venv --python 3.12
+          WHEEL_URL=$(gh api "repos/nanvix/zutils/releases/tags/${VERSION}" \
+            --jq '.assets[] | select(.name | endswith(".whl")) | .browser_download_url')
+          uv pip install --python .nanvix/venv/bin/python "$WHEEL_URL"
+
+      - name: Check Python formatting (black)
+        if: inputs.python-paths != ''
+        run: uvx black==25.1.0 --check --config .nanvix/black.toml ${{ inputs.python-paths }}
+
+      - name: Type check (pyright)
+        if: inputs.python-paths != ''
+        run: uvx pyright==1.1.400 --project .nanvix/pyrightconfig.json
+
+      - name: Check shell formatting (shfmt)
+        if: inputs.shell-paths != ''
+        run: shfmt -d -i 4 -ci ${{ inputs.shell-paths }}
+
+      - name: Lint shell scripts (shellcheck)
+        if: inputs.shell-paths != ''
+        run: shellcheck ${{ inputs.shell-paths }}
+
+      - name: Lint YAML files (yamllint)
+        run: uvx yamllint==1.37.0 -c .nanvix/.yamllint.yml .github/workflows/
+
   # -------------------------------------------------------------------
   # Job 1: Resolve Nanvix release metadata via nanvix-zutil
   # -------------------------------------------------------------------
