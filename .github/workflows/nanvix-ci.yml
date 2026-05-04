@@ -444,7 +444,7 @@ jobs:
 
       - name: Download Linux build output
         if: ${{ !inputs.windows-build }}
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: windows-test-build-${{ matrix.platform }}-${{ matrix.memory }}
 
@@ -619,7 +619,7 @@ jobs:
 
       - name: Download all build artifacts
         id: download-artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           path: release-artifacts
