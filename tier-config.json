@@ -10,8 +10,6 @@
         "nanvix/quickjs",
         "nanvix/libffi",
         "nanvix/libxml2",
-        "nanvix/libxslt",
-        "nanvix/lxml",
         "nanvix/posix-tests",
         "nanvix/xz"
       ]
@@ -20,6 +18,7 @@
       "name": "tier2",
       "cron": "0 10 * * *",
       "repos": [
+        "nanvix/libxslt",
         "nanvix/sqlite"
       ]
     },
@@ -27,6 +26,7 @@
       "name": "tier3",
       "cron": "0 11 * * *",
       "repos": [
+        "nanvix/lxml",
         "nanvix/cpython"
       ]
     },
