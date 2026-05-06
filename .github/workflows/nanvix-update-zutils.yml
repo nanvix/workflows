@@ -2,7 +2,7 @@
 # Licensed under the MIT License.
 
 # This workflow syncs consumer repositories with the latest nanvix/zutils
-# release. It runs on a tiered daily schedule (09:00/10:00/11:00/12:00 UTC) that
+# release. It runs on a tiered daily schedule (09:00–14:00 UTC) that
 # mirrors the consumer CI cascade, can be triggered manually via
 # workflow_dispatch, or called from another workflow (e.g. the zutils
 # release pipeline) via workflow_call with an explicit tag.
@@ -24,6 +24,8 @@ on:
     - cron: "0 10 * * *" # Tier 2
     - cron: "0 11 * * *" # Tier 3
     - cron: "0 12 * * *" # Tier 4
+    - cron: "0 13 * * *" # Tier 5
+    - cron: "0 14 * * *" # Tier 6
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -46,6 +48,8 @@ concurrency:
       github.event.schedule == '0 10 * * *' && 'tier2' ||
       github.event.schedule == '0 11 * * *' && 'tier3' ||
       github.event.schedule == '0 12 * * *' && 'tier4' ||
+      github.event.schedule == '0 13 * * *' && 'tier5' ||
+      github.event.schedule == '0 14 * * *' && 'tier6' ||
       'all'
     }}
   cancel-in-progress: true
