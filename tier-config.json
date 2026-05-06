@@ -9,7 +9,6 @@
         "nanvix/openssl",
         "nanvix/quickjs",
         "nanvix/libffi",
-        "nanvix/libxml2",
         "nanvix/posix-tests",
         "nanvix/xz"
       ]
@@ -18,7 +17,7 @@
       "name": "tier2",
       "cron": "0 10 * * *",
       "repos": [
-        "nanvix/libxslt",
+        "nanvix/libxml2",
         "nanvix/sqlite"
       ]
     },
@@ -26,13 +25,26 @@
       "name": "tier3",
       "cron": "0 11 * * *",
       "repos": [
-        "nanvix/lxml",
-        "nanvix/cpython"
+        "nanvix/libxslt"
       ]
     },
     {
       "name": "tier4",
       "cron": "0 12 * * *",
+      "repos": [
+        "nanvix/lxml"
+      ]
+    },
+    {
+      "name": "tier5",
+      "cron": "0 13 * * *",
+      "repos": [
+        "nanvix/cpython"
+      ]
+    },
+    {
+      "name": "tier6",
+      "cron": "0 14 * * *",
       "repos": [
         "nanvix/nanvix-python"
       ]
