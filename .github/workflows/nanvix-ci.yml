@@ -346,7 +346,7 @@ jobs:
       - name: Setup (with Docker)
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: nanvix-zutil setup --with-docker
+        run: nanvix-zutil setup --with-docker ${{ inputs.docker-image }}
 
       - name: Build (in Docker)
         run: nanvix-zutil build
