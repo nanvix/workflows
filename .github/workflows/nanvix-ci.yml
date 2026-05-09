@@ -375,6 +375,7 @@ jobs:
           name: ${{ needs.get-nanvix-info.outputs.package_name }}-${{ needs.get-nanvix-info.outputs.package_version }}-${{ matrix.target-arch }}-${{ matrix.platform }}-${{ matrix.process-mode }}-${{ matrix.memory }}
           path: |
             dist/*.tar.bz2
+            dist/*.tar.gz
             dist/*.zip
           retention-days: 7
 
@@ -641,8 +642,8 @@ jobs:
           if [[ "${{ steps.download-artifacts.outcome }}" == "failure" ]]; then
             echo "::warning::Artifact download failed — possible API or network issue"
           fi
-          find release-artifacts \( -name "*.tar.bz2" -o -name "*.zip" \) -exec cp {} release-assets/ \; 2>/dev/null || true
-          ASSET_COUNT=$(find release-assets -name "*.tar.bz2" 2>/dev/null | wc -l)
+          find release-artifacts \( -name "*.tar.bz2" -o -name "*.tar.gz" -o -name "*.zip" \) -exec cp {} release-assets/ \; 2>/dev/null || true
+          ASSET_COUNT=$(find release-assets \( -name "*.tar.bz2" -o -name "*.tar.gz" \) 2>/dev/null | wc -l)
           echo "Found $ASSET_COUNT release asset(s)"
           if [[ "$ASSET_COUNT" -eq 0 ]]; then
             echo "::error::No release assets found — all matrix builds may have failed"
