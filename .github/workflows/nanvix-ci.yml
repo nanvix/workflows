@@ -139,6 +139,13 @@ on:
         required: false
         type: string
         default: ".github/workflows/nanvix-ci.yml"
+      docker-image:
+        description: >
+          Docker image used for cross-compilation.
+          Defaults to the Nanvix GCC toolchain image on GHCR.
+        required: false
+        type: string
+        default: "ghcr.io/nanvix/toolchain-gcc:sha-34a3641"
     secrets:
       GH_TOKEN:
         description: >
@@ -334,7 +341,7 @@ jobs:
           python3 -m pip install --break-system-packages "$WHEEL_URL"
 
       - name: Pull Docker image
-        run: docker pull nanvix/toolchain:latest-minimal
+        run: docker pull ${{ inputs.docker-image }}
 
       - name: Setup (with Docker)
         env:
@@ -458,7 +465,7 @@ jobs:
       - name: Pull Docker image
         if: inputs.windows-build
         shell: pwsh
-        run: docker pull nanvix/toolchain:latest-minimal
+        run: docker pull ${{ inputs.docker-image }}
 
       - name: Build (cross-compile via Docker)
         if: inputs.windows-build
