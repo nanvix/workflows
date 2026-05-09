@@ -320,6 +320,7 @@ jobs:
       NANVIX_DEPLOYMENT_MODE: ${{ matrix.process-mode }}
       NANVIX_MEMORY_SIZE: ${{ matrix.memory }}
       NANVIX_VERSION: ${{ needs.get-nanvix-info.outputs.nanvix_tag }}
+      NANVIX_DOCKER_IMAGE: ${{ inputs.docker-image }}
     steps:
       - uses: actions/checkout@v6
 
@@ -430,6 +431,7 @@ jobs:
       NANVIX_DEPLOYMENT_MODE: standalone
       NANVIX_MEMORY_SIZE: ${{ matrix.memory }}
       NANVIX_VERSION: ${{ needs.get-nanvix-info.outputs.nanvix_tag }}
+      NANVIX_DOCKER_IMAGE: ${{ inputs.docker-image }}
     steps:
       - uses: actions/checkout@v6
 
