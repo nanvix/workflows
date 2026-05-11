@@ -39,6 +39,7 @@ jobs:
       platforms: ${{ inputs.platforms }}
       process-modes: ${{ inputs.process-modes }}
       caller-event-name: ${{ github.event_name }}
+      docker-image: "ghcr.io/nanvix/toolchain-gcc:sha-34a3641"
     secrets:
       GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
       DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}

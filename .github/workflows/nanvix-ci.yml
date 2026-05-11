@@ -142,10 +142,8 @@ on:
       docker-image:
         description: >
           Docker image used for cross-compilation.
-          Defaults to the Nanvix GCC toolchain image on GHCR.
-        required: false
+        required: true
         type: string
-        default: "ghcr.io/nanvix/toolchain-gcc:sha-34a3641"
     secrets:
       GH_TOKEN:
         description: >
@@ -450,7 +448,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         shell: pwsh
-        run: nanvix-zutil setup
+        run: nanvix-zutil setup --with-docker ${{ inputs.docker-image }}
 
       - name: Download Linux build output
         if: ${{ !inputs.windows-build }}
