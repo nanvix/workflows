@@ -354,10 +354,10 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in 1 2 3 4 5; do
+            echo "attempting docker pull (attempt $attempt/5)" >&2
             if docker pull "$NANVIX_DOCKER_IMAGE"; then
               exit 0
             fi
-            echo "docker pull failed (attempt $attempt/5); retrying..." >&2
             sleep $((attempt * 10))
           done
           echo "docker pull failed after 5 attempts" >&2
@@ -499,9 +499,9 @@ jobs:
           NANVIX_DOCKER_IMAGE: ${{ inputs.docker-image }}
         run: |
           for ($attempt = 1; $attempt -le 5; $attempt++) {
+            Write-Host "attempting docker pull (attempt $attempt/5)"
             docker pull $env:NANVIX_DOCKER_IMAGE
             if ($LASTEXITCODE -eq 0) { exit 0 }
-            Write-Host "docker pull failed (attempt $attempt/5); retrying..."
             Start-Sleep -Seconds ($attempt * 10)
           }
           Write-Host "docker pull failed after 5 attempts"
