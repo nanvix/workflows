@@ -342,7 +342,7 @@ jobs:
 
       - name: Log in to GHCR
         if: startsWith(inputs.docker-image, 'ghcr.io/')
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -486,7 +486,7 @@ jobs:
 
       - name: Log in to GHCR
         if: inputs.windows-build && startsWith(inputs.docker-image, 'ghcr.io/')
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
