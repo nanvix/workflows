@@ -398,13 +398,14 @@ jobs:
             dist/*.zip
           retention-days: 7
 
-      - name: Upload ELF binaries for Windows test
+      - name: Upload build binaries for Windows test
         if: success() && inputs.windows-test && matrix.process-mode == 'standalone'
         uses: actions/upload-artifact@v7
         with:
           name: windows-test-build-${{ matrix.platform }}-${{ matrix.memory }}
           path: |
             **/*.elf
+            **/*.so
           retention-days: 1
           if-no-files-found: warn
 
