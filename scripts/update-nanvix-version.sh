@@ -113,7 +113,7 @@ record_skip() {
 		first="$now"
 	fi
 
-	if [ "$count" -gt "$MAX_RETRIES" ]; then
+	if [ "$count" -ge "$MAX_RETRIES" ]; then
 		echo "::warning::Preflight skipped ${count} times for v${LATEST_VERSION}; exhausted MAX_RETRIES=${MAX_RETRIES}, opening tracking issue."
 		open_stuck_issue "$count"
 		clear_retry_state
@@ -220,8 +220,4 @@ function main() {
     fi
 }
 
-# Only execute main when this file is invoked directly, not sourced (so the
-# test harness can load helpers in isolation without running the real flow).
-if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
-	main "$@"
-fi
+main
