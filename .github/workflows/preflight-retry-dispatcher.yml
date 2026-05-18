@@ -1,0 +1,43 @@
+# Copyright(c) The Maintainers of Nanvix.
+# Licensed under the MIT License.
+#
+# Hourly dispatcher that re-triggers Nanvix CI on consumer repos whose
+# preflight has previously skipped and whose retry window has elapsed.
+#
+# Reads the per-consumer repository variable PREFLIGHT_RETRY_STATE (set
+# by scripts/update-nanvix-version.sh on a missing-dep skip) and fires
+# `gh workflow run nanvix-ci.yml --ref <default-branch>` at any
+# consumer whose `next_attempt_unix` is in the past.
+#
+# Idempotent: if a consumer is not in retry state, it is silently
+# skipped. The retry state itself is cleaned up by the consumer-side
+# script on a successful preflight or after MAX_RETRIES exhaustion.
+
+name: Preflight Retry Dispatcher
+
+on:
+    # Hourly, offset to :30 to avoid collision with the tier crons that
+    # run at :00 (09:00–14:00 UTC).
+    schedule:
+        - cron: "30 * * * *"
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: preflight-retry-dispatcher
+    cancel-in-progress: false
+
+jobs:
+    dispatch-due-retries:
+        name: Dispatch due preflight retries
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v6
+
+            - name: Dispatch retries to consumers with elapsed windows
+              env:
+                  GH_TOKEN: ${{ secrets.DISPATCH_TOKEN || secrets.GH_TOKEN }}
+              run: scripts/dispatch-retries.sh
