@@ -100,9 +100,19 @@ on:
         default: false
         type: boolean
       benchmark-args:
-        description: Extra args passed to nanvix-zutil benchmark --.
+        description: >
+          (Deprecated) Whitespace-separated extra args passed to
+          nanvix-zutil benchmark --. Quoting/escaping is not preserved.
         required: false
         default: ""
+        type: string
+      benchmark-args-json:
+        description: >
+          JSON array of extra benchmark arguments passed to
+          nanvix-zutil benchmark -- preserving spaces and quoting.
+          Example: '["hello-world","--case","name with spaces"]'
+        required: false
+        default: "[]"
         type: string
       benchmark-matrix-exclude:
         description: JSON array of matrix entries to exclude from the benchmark matrix.
@@ -586,8 +596,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           BENCHMARK_ARGS: ${{ inputs.benchmark-args }}
+          BENCHMARK_ARGS_JSON: ${{ inputs.benchmark-args-json }}
         run: |
-          if [[ -n "$BENCHMARK_ARGS" ]]; then
+          if [[ "$BENCHMARK_ARGS_JSON" != "[]" ]]; then
+            mapfile -t args < <(jq -r '.[]' <<< "$BENCHMARK_ARGS_JSON")
+            nanvix-zutil benchmark -- "${args[@]}"
+          elif [[ -n "$BENCHMARK_ARGS" ]]; then
             read -r -a args <<< "$BENCHMARK_ARGS"
             nanvix-zutil benchmark -- "${args[@]}"
           else
