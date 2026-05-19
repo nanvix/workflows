@@ -94,6 +94,31 @@ on:
         required: false
         default: true
         type: boolean
+      benchmark:
+        description: Enable benchmark job after build (nanvix-zutil setup + benchmark).
+        required: false
+        default: false
+        type: boolean
+      benchmark-args:
+        description: >
+          (Deprecated) Whitespace-separated extra args passed to
+          nanvix-zutil benchmark --. Quoting/escaping is not preserved.
+        required: false
+        default: ""
+        type: string
+      benchmark-args-json:
+        description: >
+          JSON array of extra benchmark arguments passed to
+          nanvix-zutil benchmark -- preserving spaces and quoting.
+          Example: '["hello-world","--case","name with spaces"]'
+        required: false
+        default: "[]"
+        type: string
+      benchmark-matrix-exclude:
+        description: JSON array of matrix entries to exclude from the benchmark matrix.
+        required: false
+        default: "[]"
+        type: string
       windows-build:
         description: >
           Build on Windows via Docker Desktop before testing. Requires a
@@ -522,16 +547,107 @@ jobs:
         run: nanvix-zutil test
 
   # -------------------------------------------------------------------
-  # Job 4: Open a GitHub issue on any job failure
+  # Job 4: Optional benchmark
+  # -------------------------------------------------------------------
+  benchmark:
+    needs: [get-nanvix-info, build]
+    if: >-
+      inputs.benchmark
+      && !cancelled()
+      && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target-arch: ${{ fromJSON(inputs.target-archs) }}
+        platform: ${{ fromJSON(inputs.platforms) }}
+        process-mode: ${{ fromJSON(inputs.process-modes) }}
+        memory: ${{ fromJSON(inputs.memory-sizes) }}
+        exclude: ${{ fromJSON(inputs.benchmark-matrix-exclude) }}
+    name: benchmark (${{ matrix.target-arch }}-${{ matrix.platform }}-${{ matrix.process-mode }}-${{ matrix.memory }})
+    defaults:
+      run:
+        shell: bash
+    env:
+      NANVIX_TARGET: ${{ matrix.target-arch }}
+      NANVIX_MACHINE: ${{ matrix.platform }}
+      NANVIX_DEPLOYMENT_MODE: ${{ matrix.process-mode }}
+      NANVIX_MEMORY_SIZE: ${{ matrix.memory }}
+      NANVIX_VERSION: ${{ needs.get-nanvix-info.outputs.nanvix_tag }}
+      NANVIX_DOCKER_IMAGE: ${{ inputs.docker-image }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install nanvix-zutil
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          NANVIX_ZUTIL_VERSION: ${{ inputs.zutil-version }}
+        run: |
+          WHEEL_URL=$(gh api repos/nanvix/zutils/releases/tags/"$NANVIX_ZUTIL_VERSION" \
+            --jq '.assets[] | select(.name | endswith(".whl")) | .browser_download_url')
+          python3 -m pip install --break-system-packages "$WHEEL_URL"
+
+      - name: Setup (with Docker)
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: nanvix-zutil setup --with-docker ${{ inputs.docker-image }}
+
+      - name: Benchmark
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          BENCHMARK_ARGS: ${{ inputs.benchmark-args }}
+          BENCHMARK_ARGS_JSON: ${{ inputs.benchmark-args-json }}
+        run: |
+          set -euo pipefail
+          if [[ "$BENCHMARK_ARGS_JSON" != "[]" ]]; then
+            if ! command -v jq >/dev/null 2>&1; then
+              echo "::error::jq is required to parse benchmark-args-json"
+              exit 1
+            fi
+            if ! jq -e 'type == "array" and all(.[]; type == "string")' >/dev/null <<< "$BENCHMARK_ARGS_JSON"; then
+              echo "::error::benchmark-args-json must be a JSON array of strings, got: $BENCHMARK_ARGS_JSON"
+              exit 1
+            fi
+            mapfile -t args < <(jq -r '.[] | select(length > 0)' <<< "$BENCHMARK_ARGS_JSON")
+            if (( ${#args[@]} > 0 )); then
+              nanvix-zutil benchmark -- "${args[@]}"
+            else
+              nanvix-zutil benchmark
+            fi
+          elif [[ -n "$BENCHMARK_ARGS" ]]; then
+            read -r -a args <<< "$BENCHMARK_ARGS"
+            nanvix-zutil benchmark -- "${args[@]}"
+          else
+            nanvix-zutil benchmark
+          fi
+
+      - name: Collect failure logs
+        if: failure()
+        run: |
+          mkdir -p ci-logs
+          cp -f /tmp/*.log ci-logs/ 2>/dev/null || true
+          find .nanvix -type f -name "*.log" -exec cp -f {} ci-logs/ \; 2>/dev/null || true
+
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-failure-logs-${{ matrix.target-arch }}-${{ matrix.platform }}-${{ matrix.process-mode }}-${{ matrix.memory }}
+          path: ci-logs/*
+          if-no-files-found: warn
+
+  # -------------------------------------------------------------------
+  # Job 5: Open a GitHub issue on any job failure
   # -------------------------------------------------------------------
   report-failure:
-    needs: [get-nanvix-info, build, release, update-nanvix-version, windows-test]
+    needs: [get-nanvix-info, build, benchmark, release, update-nanvix-version, windows-test]
     # Only report true failures (not cancellations from higher-priority runs).
     # The ci-passed gate intentionally still fails on cancelled for branch protection.
     if: >-
       always() &&
       inputs.caller-event-name != 'pull_request' &&
       (needs.build.result == 'failure'
+       || needs.benchmark.result == 'failure'
        || needs.release.result == 'failure'
        || needs.update-nanvix-version.result == 'failure')
     runs-on: ubuntu-latest
@@ -542,6 +658,7 @@ jobs:
           FAILED=""
           for pair in \
             "build:${{ needs.build.result }}" \
+            "benchmark:${{ needs.benchmark.result }}" \
             "release:${{ needs.release.result }}" \
             "update-nanvix-version:${{ needs.update-nanvix-version.result }}"
           do
@@ -654,11 +771,15 @@ jobs:
             "${ASSIGNEE_ARGS[@]}"
 
   # -------------------------------------------------------------------
-  # Job 4: Create a GitHub release and trigger downstream workflows
+  # Job 6: Create a GitHub release and trigger downstream workflows
   # -------------------------------------------------------------------
   release:
-    needs: [get-nanvix-info, build]
-    if: ${{ !cancelled() && inputs.caller-event-name != 'pull_request' }}
+    needs: [get-nanvix-info, build, benchmark]
+    if: >-
+      !cancelled()
+      && inputs.caller-event-name != 'pull_request'
+      && needs.build.result == 'success'
+      && (needs.benchmark.result == 'success' || needs.benchmark.result == 'skipped')
     runs-on: ubuntu-latest
     env:
       NANVIX_ZUTIL_VERSION: ${{ inputs.zutil-version }}
@@ -752,7 +873,7 @@ jobs:
           done
 
   # -------------------------------------------------------------------
-  # Job 5: Pin nanvix version in consumer repo
+  # Job 7: Pin nanvix version in consumer repo
   # -------------------------------------------------------------------
   update-nanvix-version:
     name: Update Nanvix Version
@@ -790,10 +911,10 @@ jobs:
         run: .nanvix-workflows/scripts/update-nanvix-version.sh
 
   # -------------------------------------------------------------------
-  # Job 6: CI gate — single required status check for branch protection
+  # Job 8: CI gate — single required status check for branch protection
   # -------------------------------------------------------------------
   ci-passed:
-    needs: [get-nanvix-info, build, release, update-nanvix-version, windows-test]
+    needs: [get-nanvix-info, build, benchmark, release, update-nanvix-version, windows-test]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -816,9 +937,15 @@ jobs:
             echo "windows-test failed"
             exit 1
           fi
+          # benchmark is opt-in — only fail if it ran and failed.
+          BENCH_RESULT="${{ needs.benchmark.result }}"
+          if [[ "$BENCH_RESULT" == "failure" ]]; then
+            echo "benchmark failed"
+            exit 1
+          fi
 
   # -------------------------------------------------------------------
-  # Job 7: Auto-merge automation PRs after CI passes
+  # Job 9: Auto-merge automation PRs after CI passes
   # -------------------------------------------------------------------
   auto-merge:
     needs: ci-passed

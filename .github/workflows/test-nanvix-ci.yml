@@ -26,6 +26,23 @@ on:
         required: false
         default: '["single-process"]'
         type: string
+      benchmark:
+        description: Enable benchmark job in reusable workflow.
+        required: false
+        default: false
+        type: boolean
+      benchmark-args:
+        description: >
+          (Deprecated) Whitespace-separated benchmark args passed through
+          to reusable workflow.
+        required: false
+        default: ""
+        type: string
+      benchmark-args-json:
+        description: JSON array of benchmark args passed through to reusable workflow.
+        required: false
+        default: "[]"
+        type: string
 
 permissions:
   contents: write
@@ -38,6 +55,9 @@ jobs:
       zutil-version: ${{ inputs.zutil-version }}
       platforms: ${{ inputs.platforms }}
       process-modes: ${{ inputs.process-modes }}
+      benchmark: ${{ inputs.benchmark }}
+      benchmark-args: ${{ inputs.benchmark-args }}
+      benchmark-args-json: ${{ inputs.benchmark-args-json }}
       caller-event-name: ${{ github.event_name }}
       docker-image: "ghcr.io/nanvix/toolchain-gcc:sha-34a3641"
     secrets:
