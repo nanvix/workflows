@@ -598,9 +598,22 @@ jobs:
           BENCHMARK_ARGS: ${{ inputs.benchmark-args }}
           BENCHMARK_ARGS_JSON: ${{ inputs.benchmark-args-json }}
         run: |
+          set -euo pipefail
           if [[ "$BENCHMARK_ARGS_JSON" != "[]" ]]; then
-            mapfile -t args < <(jq -r '.[]' <<< "$BENCHMARK_ARGS_JSON")
-            nanvix-zutil benchmark -- "${args[@]}"
+            if ! command -v jq >/dev/null 2>&1; then
+              echo "::error::jq is required to parse benchmark-args-json"
+              exit 1
+            fi
+            if ! jq -e 'type == "array" and all(.[]; type == "string")' >/dev/null <<< "$BENCHMARK_ARGS_JSON"; then
+              echo "::error::benchmark-args-json must be a JSON array of strings, got: $BENCHMARK_ARGS_JSON"
+              exit 1
+            fi
+            mapfile -t args < <(jq -r '.[] | select(length > 0)' <<< "$BENCHMARK_ARGS_JSON")
+            if (( ${#args[@]} > 0 )); then
+              nanvix-zutil benchmark -- "${args[@]}"
+            else
+              nanvix-zutil benchmark
+            fi
           elif [[ -n "$BENCHMARK_ARGS" ]]; then
             read -r -a args <<< "$BENCHMARK_ARGS"
             nanvix-zutil benchmark -- "${args[@]}"
