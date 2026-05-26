@@ -431,6 +431,8 @@ jobs:
           path: |
             **/*.elf
             **/*.so
+            **/*.a
+            include/**/*.h
           retention-days: 1
           if-no-files-found: warn
 
