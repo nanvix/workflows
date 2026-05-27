@@ -12,9 +12,12 @@ on:
   workflow_dispatch:
     inputs:
       zutil-version:
-        description: nanvix-zutil version to install (e.g. v0.4.0).
-        required: true
-        default: "v0.4.0"
+        description: >
+          nanvix-zutil version to install (e.g. v0.10.2). Leave empty
+          to exercise the `.zutils-version` file resolution path in
+          the reusable workflow.
+        required: false
+        default: ""
         type: string
       platforms:
         description: JSON array of target platforms (default is minimal).
