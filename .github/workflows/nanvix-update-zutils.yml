@@ -175,8 +175,12 @@ jobs:
             local FILE
             for FILE in .github/workflows/*.yml .github/workflows/*.yaml; do
               [ -f "$FILE" ] || continue
-              if grep -qE 'zutil-version:[[:space:]]*"v[^"]+"' "$FILE"; then
+              # Update the `zutil-version:` input on reusable-workflow
+              # calls, as well as `NANVIX_ZUTIL_VERSION:` env vars used
+              # by custom jobs that install nanvix-zutil directly.
+              if grep -qE '(zutil-version|NANVIX_ZUTIL_VERSION):[[:space:]]*"v[^"]+"' "$FILE"; then
                 sed -i -E "s|(zutil-version:[[:space:]]*\")v[^\"]+|\1${LATEST_TAG}|g" "$FILE"
+                sed -i -E "s|(NANVIX_ZUTIL_VERSION:[[:space:]]*\")v[^\"]+|\1${LATEST_TAG}|g" "$FILE"
                 if ! git diff --quiet -- "$FILE"; then
                   git add "$FILE"
                   CHANGED=1
