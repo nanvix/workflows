@@ -178,9 +178,9 @@ jobs:
               # Update the `zutil-version:` input on reusable-workflow
               # calls, as well as `NANVIX_ZUTIL_VERSION:` env vars used
               # by custom jobs that install nanvix-zutil directly.
-              if grep -qE '(zutil-version|NANVIX_ZUTIL_VERSION):[[:space:]]*"v[^"]+"' "$FILE"; then
-                sed -i -E "s|(zutil-version:[[:space:]]*\")v[^\"]+|\1${LATEST_TAG}|g" "$FILE"
-                sed -i -E "s|(NANVIX_ZUTIL_VERSION:[[:space:]]*\")v[^\"]+|\1${LATEST_TAG}|g" "$FILE"
+              if grep -qE '(zutil-version|NANVIX_ZUTIL_VERSION):[[:space:]]*['"'"'"]?v[^[:space:]'"'"'"]+['"'"'"]?' "$FILE"; then
+                sed -i -E "s|(zutil-version:[[:space:]]*)(['\"]?)v[^[:space:]'\"]+\2|\1\2${LATEST_TAG}\2|g" "$FILE"
+                sed -i -E "s|(NANVIX_ZUTIL_VERSION:[[:space:]]*)(['\"]?)v[^[:space:]'\"]+\2|\1\2${LATEST_TAG}\2|g" "$FILE"
                 if ! git diff --quiet -- "$FILE"; then
                   git add "$FILE"
                   CHANGED=1
