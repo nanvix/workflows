@@ -10,10 +10,6 @@ name: Nanvix CI
 on:
   workflow_call:
     inputs:
-      zutil-version:
-        description: nanvix-zutil version to install (e.g. v0.4.0).
-        required: true
-        type: string
       platforms:
         description: JSON array of target platforms.
         required: false
@@ -208,10 +204,43 @@ permissions:
 
 jobs:
   # -------------------------------------------------------------------
-  # Job 0: Format & Lint — Python, shell, and YAML checks
+  # Resolve effective nanvix-zutil version
+  # -------------------------------------------------------------------
+  resolve-zutil-version:
+    name: Resolve zutil version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve version
+        id: resolve
+        run: |
+          set -euo pipefail
+          if [ -f .zutils-version ]; then
+            VERSION="$(tr -d '[:space:]' < .zutils-version)"
+            if [ -z "$VERSION" ]; then
+              echo "::error::.zutils-version exists but is empty"
+              exit 1
+            fi
+            echo "Using zutil-version from .zutils-version: $VERSION"
+          else
+            echo "::error::No .zutils-version file found at repo root"
+            exit 1
+          fi
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][[:alnum:].-]+)?$ ]]; then
+            echo "::error::Invalid zutil version format: '$VERSION' (expected vX.Y.Z)"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  # -------------------------------------------------------------------
+  # Format & Lint — Python, shell, and YAML checks
   # -------------------------------------------------------------------
   format-and-lint:
     name: Format & Lint
+    needs: resolve-zutil-version
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -264,7 +293,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           set -euo pipefail
-          VERSION="${{ inputs.zutil-version }}"
+          VERSION="${{ needs.resolve-zutil-version.outputs.version }}"
           uv venv .nanvix/venv --python 3.12
           WHEEL_URL=$(gh api "repos/nanvix/zutils/releases/tags/${VERSION}" \
             --jq '.assets[] | select(.name | endswith(".whl")) | .browser_download_url')
@@ -291,10 +320,11 @@ jobs:
         run: uvx yamllint@1.37.0 -c .nanvix/.yamllint.yml ${{ inputs.yaml-paths }}
 
   # -------------------------------------------------------------------
-  # Job 1: Resolve Nanvix release metadata via nanvix-zutil
+  # Resolve Nanvix release metadata via nanvix-zutil
   # -------------------------------------------------------------------
   get-nanvix-info:
     name: Get Nanvix Info
+    needs: resolve-zutil-version
     runs-on: ubuntu-latest
     outputs:
       nanvix_tag: ${{ steps.resolve.outputs.nanvix_tag }}
@@ -308,7 +338,7 @@ jobs:
       - name: Install nanvix-zutil
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          NANVIX_ZUTIL_VERSION: ${{ inputs.zutil-version }}
+          NANVIX_ZUTIL_VERSION: ${{ needs.resolve-zutil-version.outputs.version }}
         run: |
           WHEEL_URL=$(gh api repos/nanvix/zutils/releases/tags/"$NANVIX_ZUTIL_VERSION" \
             --jq '.assets[] | select(.name | endswith(".whl")) | .browser_download_url')
@@ -321,10 +351,10 @@ jobs:
         run: nanvix-zutil resolve >> "$GITHUB_OUTPUT"
 
   # -------------------------------------------------------------------
-  # Job 2: Matrix build — platform × process-mode × memory
+  #  Matrix build — platform × process-mode × memory
   # -------------------------------------------------------------------
   build:
-    needs: get-nanvix-info
+    needs: [resolve-zutil-version, get-nanvix-info]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -359,7 +389,7 @@ jobs:
       - name: Install nanvix-zutil
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          NANVIX_ZUTIL_VERSION: ${{ inputs.zutil-version }}
+          NANVIX_ZUTIL_VERSION: ${{ needs.resolve-zutil-version.outputs.version }}
         run: |
           WHEEL_URL=$(gh api repos/nanvix/zutils/releases/tags/"$NANVIX_ZUTIL_VERSION" \
             --jq '.assets[] | select(.name | endswith(".whl")) | .browser_download_url')
@@ -450,7 +480,7 @@ jobs:
           if-no-files-found: warn
 
   # -------------------------------------------------------------------
-  # Job 3: Windows smoke test
+  #  Windows smoke test
   #
   # Runs when the process-modes input includes "standalone" (required
   # for Windows — multi-process needs linuxd which is Linux-only).
@@ -458,7 +488,7 @@ jobs:
   # like the Linux build job.
   # -------------------------------------------------------------------
   windows-test:
-    needs: [get-nanvix-info, build]
+    needs: [resolve-zutil-version, get-nanvix-info, build]
     if: >-
       inputs.windows-test
       && contains(fromJSON(inputs.process-modes), 'standalone')
@@ -484,7 +514,7 @@ jobs:
       - name: Install nanvix-zutil
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          NANVIX_ZUTIL_VERSION: ${{ inputs.zutil-version }}
+          NANVIX_ZUTIL_VERSION: ${{ needs.resolve-zutil-version.outputs.version }}
         shell: pwsh
         run: |
           $jq = '.assets[] | select(.name | endswith(".whl")) | .browser_download_url'
@@ -547,10 +577,10 @@ jobs:
         run: nanvix-zutil test
 
   # -------------------------------------------------------------------
-  # Job 4: Optional benchmark
+  #  Benchmark (optional)
   # -------------------------------------------------------------------
   benchmark:
-    needs: [get-nanvix-info, build]
+    needs: [resolve-zutil-version, get-nanvix-info, build]
     if: >-
       inputs.benchmark
       && !cancelled()
@@ -581,7 +611,7 @@ jobs:
       - name: Install nanvix-zutil
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          NANVIX_ZUTIL_VERSION: ${{ inputs.zutil-version }}
+          NANVIX_ZUTIL_VERSION: ${{ needs.resolve-zutil-version.outputs.version }}
         run: |
           WHEEL_URL=$(gh api repos/nanvix/zutils/releases/tags/"$NANVIX_ZUTIL_VERSION" \
             --jq '.assets[] | select(.name | endswith(".whl")) | .browser_download_url')
@@ -637,10 +667,18 @@ jobs:
           if-no-files-found: warn
 
   # -------------------------------------------------------------------
-  # Job 5: Open a GitHub issue on any job failure
+  # Open a GitHub issue on any job failure
   # -------------------------------------------------------------------
   report-failure:
-    needs: [get-nanvix-info, build, benchmark, release, update-nanvix-version, windows-test]
+    needs:
+      [
+        get-nanvix-info,
+        build,
+        benchmark,
+        release,
+        update-nanvix-version,
+        windows-test,
+      ]
     # Only report true failures (not cancellations from higher-priority runs).
     # The ci-passed gate intentionally still fails on cancelled for branch protection.
     if: >-
@@ -771,10 +809,10 @@ jobs:
             "${ASSIGNEE_ARGS[@]}"
 
   # -------------------------------------------------------------------
-  # Job 6: Create a GitHub release and trigger downstream workflows
+  # Create a GitHub release and trigger downstream workflows
   # -------------------------------------------------------------------
   release:
-    needs: [get-nanvix-info, build, benchmark]
+    needs: [resolve-zutil-version, get-nanvix-info, build, benchmark]
     if: >-
       !cancelled()
       && inputs.caller-event-name != 'pull_request'
@@ -782,7 +820,7 @@ jobs:
       && (needs.benchmark.result == 'success' || needs.benchmark.result == 'skipped')
     runs-on: ubuntu-latest
     env:
-      NANVIX_ZUTIL_VERSION: ${{ inputs.zutil-version }}
+      NANVIX_ZUTIL_VERSION: ${{ needs.resolve-zutil-version.outputs.version }}
     steps:
       - uses: actions/checkout@v6
 
@@ -873,7 +911,7 @@ jobs:
           done
 
   # -------------------------------------------------------------------
-  # Job 7: Pin nanvix version in consumer repo
+  # Pin nanvix version in consumer repo
   # -------------------------------------------------------------------
   update-nanvix-version:
     name: Update Nanvix Version
@@ -911,16 +949,26 @@ jobs:
         run: .nanvix-workflows/scripts/update-nanvix-version.sh
 
   # -------------------------------------------------------------------
-  # Job 8: CI gate — single required status check for branch protection
+  # CI gate — single required status check for branch protection
   # -------------------------------------------------------------------
   ci-passed:
-    needs: [get-nanvix-info, build, benchmark, release, update-nanvix-version, windows-test]
+    needs:
+      [
+        resolve-zutil-version,
+        get-nanvix-info,
+        build,
+        benchmark,
+        release,
+        update-nanvix-version,
+        windows-test,
+      ]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check upstream results
         run: |
           for result in \
+            "${{ needs.resolve-zutil-version.result }}" \
             "${{ needs.get-nanvix-info.result }}" \
             "${{ needs.build.result }}" \
             "${{ needs.release.result }}" \
@@ -945,7 +993,7 @@ jobs:
           fi
 
   # -------------------------------------------------------------------
-  # Job 9: Auto-merge automation PRs after CI passes
+  # Auto-merge automation PRs after CI passes
   # -------------------------------------------------------------------
   auto-merge:
     needs: ci-passed
