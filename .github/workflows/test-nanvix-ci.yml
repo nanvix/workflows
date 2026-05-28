@@ -11,15 +11,6 @@ name: Test Nanvix CI
 on:
   workflow_dispatch:
     inputs:
-      zutil-version:
-        description: >
-          nanvix-zutil version to install for this test workflow
-          (for example, v0.10.2). Provide an explicit version so
-          manual dispatch succeeds without relying on a
-          `.zutils-version` file in the caller repository.
-        required: false
-        default: "v0.10.2"
-        type: string
       platforms:
         description: JSON array of target platforms (default is minimal).
         required: false
@@ -56,7 +47,6 @@ jobs:
   ci:
     uses: ./.github/workflows/nanvix-ci.yml
     with:
-      zutil-version: ${{ inputs.zutil-version }}
       platforms: ${{ inputs.platforms }}
       process-modes: ${{ inputs.process-modes }}
       benchmark: ${{ inputs.benchmark }}

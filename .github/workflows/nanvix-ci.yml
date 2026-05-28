@@ -10,17 +10,6 @@ name: Nanvix CI
 on:
   workflow_call:
     inputs:
-      zutil-version:
-        description: >
-          DEPRECATED.
-          nanvix-zutil version to install (e.g. v0.10.2). Optional
-          override. If omitted or empty, the version is read from a
-          `.zutils-version` file at the consumer repo root (maintained
-          by the `nanvix-update-zutils.yml` automation). Resolution
-          fails if neither source is available.
-        required: false
-        default: ""
-        type: string
       platforms:
         description: JSON array of target platforms.
         required: false
@@ -216,12 +205,6 @@ permissions:
 jobs:
   # -------------------------------------------------------------------
   # Resolve effective nanvix-zutil version
-  #
-  # Precedence:
-  #   1. Explicit `zutil-version` input on the workflow call (override).
-  #   2. `.zutils-version` file at the consumer repo root, maintained
-  #      by the `nanvix-update-zutils.yml` automation.
-  # Fails if neither is provided.
   # -------------------------------------------------------------------
   resolve-zutil-version:
     name: Resolve zutil version
@@ -233,14 +216,9 @@ jobs:
 
       - name: Resolve version
         id: resolve
-        env:
-          INPUT_VERSION: ${{ inputs.zutil-version }}
         run: |
           set -euo pipefail
-          if [ -n "$INPUT_VERSION" ]; then
-            VERSION="$INPUT_VERSION"
-            echo "Using zutil-version from workflow input: $VERSION"
-          elif [ -f .zutils-version ]; then
+          if [ -f .zutils-version ]; then
             VERSION="$(tr -d '[:space:]' < .zutils-version)"
             if [ -z "$VERSION" ]; then
               echo "::error::.zutils-version exists but is empty"
@@ -248,7 +226,7 @@ jobs:
             fi
             echo "Using zutil-version from .zutils-version: $VERSION"
           else
-            echo "::error::No zutil-version provided and no .zutils-version file found at repo root"
+            echo "::error::No .zutils-version file found at repo root"
             exit 1
           fi
           if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][[:alnum:].-]+)?$ ]]; then
