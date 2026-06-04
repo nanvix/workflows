@@ -448,9 +448,9 @@ jobs:
         with:
           name: ${{ needs.get-nanvix-info.outputs.package_name }}-${{ needs.get-nanvix-info.outputs.package_version }}-${{ matrix.target-arch }}-${{ matrix.platform }}-${{ matrix.process-mode }}-${{ matrix.memory }}
           path: |
-            dist/*.tar.bz2
-            dist/*.tar.gz
-            dist/*.zip
+            .nanvix/out/dist/*.tar.bz2
+            .nanvix/out/dist/*.tar.gz
+            .nanvix/out/dist/*.zip
           retention-days: 7
 
       - name: Upload build binaries for Windows test
