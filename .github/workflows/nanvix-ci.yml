@@ -170,7 +170,7 @@ on:
         description: >
           Token with repo read access (for zutil install and artifact downloads)
           and contents + pull-requests write (for the update-nanvix-version job).
-        required: true
+        required: false
       DISPATCH_TOKEN:
         description: >
           Token with repo scope and admin access on consumer repos.
@@ -290,7 +290,7 @@ jobs:
       - name: Bootstrap .nanvix/venv with nanvix-zutil
         if: inputs.python-paths != ''
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
         run: |
           set -euo pipefail
           VERSION="${{ needs.resolve-zutil-version.outputs.version }}"
@@ -337,7 +337,7 @@ jobs:
 
       - name: Install nanvix-zutil
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
           NANVIX_ZUTIL_VERSION: ${{ needs.resolve-zutil-version.outputs.version }}
         run: |
           WHEEL_URL=$(gh api repos/nanvix/zutils/releases/tags/"$NANVIX_ZUTIL_VERSION" \
@@ -347,7 +347,7 @@ jobs:
       - name: Resolve lockfile and extract release info
         id: resolve
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
         run: nanvix-zutil resolve >> "$GITHUB_OUTPUT"
 
   # -------------------------------------------------------------------
@@ -388,7 +388,7 @@ jobs:
 
       - name: Install nanvix-zutil
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
           NANVIX_ZUTIL_VERSION: ${{ needs.resolve-zutil-version.outputs.version }}
         run: |
           WHEEL_URL=$(gh api repos/nanvix/zutils/releases/tags/"$NANVIX_ZUTIL_VERSION" \
@@ -420,7 +420,7 @@ jobs:
 
       - name: Setup (with Docker)
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
         run: nanvix-zutil setup --with-docker ${{ inputs.docker-image }}
 
       - name: Build (in Docker)
@@ -429,13 +429,13 @@ jobs:
       - name: Test
         if: ${{ !contains(fromJSON(inputs.skip-full-test-modes), matrix.process-mode) }}
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
         run: nanvix-zutil test
 
       - name: Test (limited)
         if: ${{ contains(fromJSON(inputs.skip-full-test-modes), matrix.process-mode) }}
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
         run: nanvix-zutil test -- ${{ inputs.standalone-test-args }}
 
       - name: Release
@@ -513,7 +513,7 @@ jobs:
 
       - name: Install nanvix-zutil
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
           NANVIX_ZUTIL_VERSION: ${{ needs.resolve-zutil-version.outputs.version }}
         shell: pwsh
         run: |
@@ -523,7 +523,7 @@ jobs:
 
       - name: Setup (downloads Windows host binaries)
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
         shell: pwsh
         run: nanvix-zutil setup --with-docker ${{ inputs.docker-image }}
 
@@ -566,13 +566,13 @@ jobs:
       - name: Build (cross-compile via Docker)
         if: inputs.windows-build
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
         shell: pwsh
         run: nanvix-zutil build
 
       - name: Test
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
         shell: pwsh
         run: nanvix-zutil test
 
@@ -610,7 +610,7 @@ jobs:
 
       - name: Install nanvix-zutil
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
           NANVIX_ZUTIL_VERSION: ${{ needs.resolve-zutil-version.outputs.version }}
         run: |
           WHEEL_URL=$(gh api repos/nanvix/zutils/releases/tags/"$NANVIX_ZUTIL_VERSION" \
@@ -619,12 +619,12 @@ jobs:
 
       - name: Setup (with Docker)
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
         run: nanvix-zutil setup --with-docker ${{ inputs.docker-image }}
 
       - name: Benchmark
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
           BENCHMARK_ARGS: ${{ inputs.benchmark-args }}
           BENCHMARK_ARGS_JSON: ${{ inputs.benchmark-args-json }}
         run: |
@@ -850,7 +850,7 @@ jobs:
 
       - name: Generate lockfile
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
         run: |
           set -euo pipefail
           WHEEL_URL=$(gh api repos/nanvix/zutils/releases/tags/"$NANVIX_ZUTIL_VERSION" \
@@ -862,7 +862,7 @@ jobs:
 
       - name: Create release
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
         run: |
           RELEASE_TAG="${{ needs.get-nanvix-info.outputs.package_version }}-nanvix-${{ needs.get-nanvix-info.outputs.nanvix_version }}"
 
@@ -932,7 +932,7 @@ jobs:
       - name: Resolve latest nanvix release tag
         id: latest
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
         run: .nanvix-workflows/scripts/resolve-nanvix-tag.sh
 
       - name: Check current nanvix-version
