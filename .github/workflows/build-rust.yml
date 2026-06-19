@@ -52,7 +52,7 @@ jobs:
     runs-on: [self-hosted]
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Cache Cargo Artifacts
         uses: actions/cache@v5
