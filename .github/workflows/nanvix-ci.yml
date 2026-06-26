@@ -458,9 +458,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: windows-test-build-${{ matrix.platform }}-${{ matrix.memory }}
-          path: |
-            **/*.elf
-            **/*.so
+          path: .nanvix/out/test/**
           retention-days: 1
           if-no-files-found: warn
 
