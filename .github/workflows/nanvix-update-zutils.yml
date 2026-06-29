@@ -13,8 +13,6 @@
 #      where the reusable `nanvix-ci.yml` reads the file
 #   2. Copying bootstrapper templates (z, z.sh, z.ps1) from the
 #      release's templates.tar.gz asset to the repo root.
-#   3. Pinning `nanvix-version` in .nanvix/nanvix.toml to the latest
-#      nanvix/nanvix release so the asset naming stays in sync.
 # A pull request is opened (or refreshed) when changes are detected.
 
 name: Update Zutils Version
@@ -128,15 +126,10 @@ jobs:
           echo "Extracted bootstrapper templates:"
           ls -la "$DIR"
 
-      - name: Resolve latest nanvix release
-        id: nanvix
-        run: bash scripts/resolve-nanvix-tag.sh
-
       - name: Update target repositories
         env:
           LATEST_TAG: ${{ steps.latest.outputs.tag }}
           TARGET_REPOS: ${{ steps.select-repos.outputs.repos }}
           TEMPLATES_DIR: ${{ steps.templates.outputs.dir }}
           DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
-          NANVIX_VERSION: ${{ steps.nanvix.outputs.version }}
         run: bash scripts/update-zutils.sh
