@@ -35,7 +35,7 @@ declare -a FAILED_REPOS=()
 update_repo() {
     local REPO="$1"
     local REPO_DIR="$2"
-
+    local CHANGED=0
     # Clone only the default branch (shallow).
     gh repo clone "$REPO" "$REPO_DIR" -- --depth 1 2>&1 || return 1
 
@@ -80,9 +80,8 @@ update_repo() {
     fi
 
     # Create or reset the automation branch and commit.
-    git checkout -B "$BRANCH"
-    git commit -m "$COMMIT_MSG"
-
+    git checkout -B "$BRANCH" || return 1
+    git commit -m "$COMMIT_MSG" || return 1
     # Push using a one-off authenticated URL to avoid
     # persisting the token in .git/config.
     git push "https://x-access-token:${DISPATCH_TOKEN}@github.com/${REPO}.git" \
@@ -91,7 +90,7 @@ update_repo() {
     # Open or refresh a PR.
     local PR_TITLE="[ci] Sync zutils ${LATEST_TAG}"
     local PR_BODY
-    printf -v PR_BODY "%s\n%s\n%s\n%s\n\n%s" \
+    printf -v PR_BODY "%s\n%s\n%s\n\n%s" \
         "Automated sync with [\`${LATEST_TAG}\`](https://github.com/nanvix/zutils/releases/tag/${LATEST_TAG}):" \
         "- Pins \`.zutils-version\` to \`${LATEST_TAG}\` (source of truth on workflows@v2.1.0+)." \
         "- Copies bootstrapper templates (\`z\`, \`z.sh\`, \`z.ps1\`) from release assets." \
