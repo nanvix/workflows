@@ -478,7 +478,7 @@ jobs:
 
       - name: Expand Windows test upload globs
         id: windows-test-paths
-        if: success() && inputs.windows-test && matrix.process-mode == 'standalone'
+        if: success() && inputs.windows-test && !inputs.windows-build && matrix.process-mode == 'standalone'
         env:
           TEST_OUTPUT_PATH: ${{ inputs.test-output-path }}
           TEST_OUTPUT_GLOBS: ${{ inputs.test-output-globs }}
@@ -489,12 +489,17 @@ jobs:
               [ -z "$glob" ] && continue
               paths+="${TEST_OUTPUT_PATH}/${glob}"$'\n'
           done < <(jq -r '.[]' <<< "$TEST_OUTPUT_GLOBS")
+
+          if [[ -z "$paths" ]]; then
+              echo "::error::test-output-globs expanded to no paths; set inputs.test-output-globs to a non-empty JSON array"
+              exit 1
+          fi
+
           {
               echo 'paths<<EOF'
               printf '%s' "$paths"
               echo 'EOF'
           } >> "$GITHUB_OUTPUT"
-
       - name: Upload build binaries for Windows test
         if: success() && inputs.windows-test && matrix.process-mode == 'standalone'
         uses: actions/upload-artifact@v7
