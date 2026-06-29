@@ -165,6 +165,29 @@ on:
           Docker image used for cross-compilation.
         required: true
         type: string
+      dist-path:
+        description: >
+          Output path for distribution artifacts.
+        required: false
+        type: string
+        default: ".nanvix/out/dist"
+      test-output-path:
+        description: >
+          Test build output path. Should capture _only_ what is required for
+          zutils test() lifecycle to run on its own. Combines with
+          test-output-globs to further filter the input.
+        required: false
+        type: string
+        default: ".nanvix/out/test"
+      test-output-globs:
+        description: >
+          JSON array of strings describing output files to tarball and bring to
+          Windows. These globs will be prefixed with `test-output-path` when
+          sending artifacts to Windows.
+        required: false
+        type: string
+        default: '["**/*.elf", "**/*.so"]'
+
     secrets:
       GH_TOKEN:
         description: >
@@ -448,17 +471,36 @@ jobs:
         with:
           name: ${{ needs.get-nanvix-info.outputs.package_name }}-${{ needs.get-nanvix-info.outputs.package_version }}-${{ matrix.target-arch }}-${{ matrix.platform }}-${{ matrix.process-mode }}-${{ matrix.memory }}
           path: |
-            .nanvix/out/dist/*.tar.bz2
-            .nanvix/out/dist/*.tar.gz
-            .nanvix/out/dist/*.zip
+            ${{inputs.dist-path}}/*.tar.bz2
+            ${{inputs.dist-path}}/*.tar.gz
+            ${{inputs.dist-path}}/*.zip
           retention-days: 7
+
+      - name: Expand Windows test upload globs
+        id: windows-test-paths
+        if: success() && inputs.windows-test && matrix.process-mode == 'standalone'
+        env:
+          TEST_OUTPUT_PATH: ${{ inputs.test-output-path }}
+          TEST_OUTPUT_GLOBS: ${{ inputs.test-output-globs }}
+        run: |
+          set -euo pipefail
+          paths=""
+          while IFS= read -r glob; do
+              [ -z "$glob" ] && continue
+              paths+="${TEST_OUTPUT_PATH}/${glob}"$'\n'
+          done < <(jq -r '.[]' <<< "$TEST_OUTPUT_GLOBS")
+          {
+              echo 'paths<<EOF'
+              printf '%s' "$paths"
+              echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
 
       - name: Upload build binaries for Windows test
         if: success() && inputs.windows-test && matrix.process-mode == 'standalone'
         uses: actions/upload-artifact@v7
         with:
           name: windows-test-build-${{ matrix.platform }}-${{ matrix.memory }}
-          path: .nanvix/out/test/**
+          path: ${{ steps.windows-test-paths.outputs.paths }}
           retention-days: 1
           if-no-files-found: warn
 
@@ -530,6 +572,7 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: windows-test-build-${{ matrix.platform }}-${{ matrix.memory }}
+          path: ${{ inputs.test-output-path }}
 
       - name: Switch Docker to Linux containers
         if: inputs.windows-build
