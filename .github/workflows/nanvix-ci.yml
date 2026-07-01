@@ -124,6 +124,13 @@ on:
         required: false
         default: false
         type: boolean
+      windows-release:
+        description: >
+          Publish a release targeting Windows by replacing nanvix ELF binaries
+          with windows EXEs. Only targets x86-microvm-standalone-256mb
+        required: false
+        default: false
+        type: boolean
       windows-matrix-exclude:
         description: >
           JSON array of {platform, memory} objects to exclude from the
@@ -982,6 +989,93 @@ jobs:
               -f "client_payload[release_tag]=$RELEASE_TAG" \
               || echo "::warning::Failed to trigger $REPO"
           done
+
+  # -------------------------------------------------------------------
+  # Release on Windows for standalone
+  # -------------------------------------------------------------------
+  windows-release:
+    needs: [get-nanvix-info, release]
+    if: ${{ inputs.windows-release }}
+      && success()
+      && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.release.outputs.release_tag }}
+      NANVIX_TAG: ${{ needs.get-nanvix-info.outputs.nanvix_tag }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download standalone tarball from release
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release download "$RELEASE_TAG" \
+            --repo "${{ github.repository }}" \
+            --pattern "*standalone*.tar.gz" \
+            --dir release-download
+          ls -la release-download/
+
+      - name: Download Nanvix Windows binaries
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release download "$NANVIX_TAG" \
+            --repo nanvix/nanvix \
+            --pattern "nanvix-windows-x86-microvm-standalone*256mb*.zip" \
+            --dir nanvix-windows
+          ls -la nanvix-windows/
+
+      - name: Create Windows zip
+        run: |
+          set -euo pipefail
+
+          # Extract the standalone tarball
+          TARBALL=$(find release-download -name "*standalone*.tar.gz" | head -1)
+          if [ -z "$TARBALL" ] || [ ! -f "$TARBALL" ]; then
+            echo "::error::No standalone .tar.gz tarball found in release-download"
+            exit 1
+          fi
+          echo "Using tarball: $TARBALL"
+          mkdir -p extract
+          tar -xzf "$TARBALL" -C extract
+
+          # Find the extracted directory name
+          DIST_DIR=$(find extract -mindepth 1 -maxdepth 1 -type d | head -1)
+          DIR_NAME=$(basename "$DIST_DIR")
+          echo "Distribution directory: $DIR_NAME"
+
+          # Extract Nanvix Windows zip to get host binaries
+          WINZIP=$(find nanvix-windows -name "*.zip" | head -1)
+          echo "Using Nanvix Windows zip: $WINZIP"
+          mkdir -p nanvix-win-extract
+          unzip -q "$WINZIP" -d nanvix-win-extract
+
+          # Replace Linux host binaries with Windows host binaries
+          rm -f "$DIST_DIR/bin/nanvixd.elf"
+          cp nanvix-win-extract/nanvixd.exe "$DIST_DIR/bin/nanvixd.exe"
+          cp nanvix-win-extract/kernel.elf "$DIST_DIR/bin/kernel.elf"
+
+          # Replace the Linux-built README with the top-level
+          # README.md (which documents the Windows workflow,
+          # including snapshot generation and warm restore).
+          cp README.md "$DIST_DIR/README.md"
+
+          # Create the Windows zip
+          ZIP_NAME="${DIR_NAME}.zip"
+          (cd extract && zip -r "../${ZIP_NAME}" "$DIR_NAME")
+          echo "zip_name=$ZIP_NAME" >> "$GITHUB_ENV"
+          echo "Created: $ZIP_NAME ($(stat -c%s "$ZIP_NAME") bytes)"
+
+      - name: Upload zip to release
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            --repo "${{ github.repository }}" \
+            "${{ env.zip_name }}" --clobber
+          echo "Uploaded ${{ env.zip_name }} to release $RELEASE_TAG"
 
   # -------------------------------------------------------------------
   # Pin nanvix version in consumer repo
