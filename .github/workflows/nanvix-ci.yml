@@ -187,6 +187,12 @@ on:
         required: false
         type: string
         default: '["**/*.elf", "**/*.so"]'
+      use-release-sha:
+        description: >
+          If true, the release job will append a SHA to the release tag.
+        required: false
+        type: boolean
+        default: false
 
     secrets:
       GH_TOKEN:
@@ -217,6 +223,9 @@ on:
       nanvix_sha:
         description: Nanvix commit SHA.
         value: ${{ jobs.get-nanvix-info.outputs.nanvix_sha }}
+      release_tag:
+        description: Tag for the release created in this job, if applicable.
+        value: ${{ jobs.release.outputs.release_tag }}
 
 permissions:
   contents: write
@@ -865,10 +874,27 @@ jobs:
       && needs.build.result == 'success'
       && (needs.benchmark.result == 'success' || needs.benchmark.result == 'skipped')
     runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.tag.outputs.release_tag }}
     env:
       NANVIX_ZUTIL_VERSION: ${{ needs.resolve-zutil-version.outputs.version }}
+      PACKAGE_NAME: ${{ needs.get-nanvix-info.outputs.package_name }}
+      PACKAGE_VERSION: ${{ needs.get-nanvix-info.outputs.package_version }}
+      NANVIX_VERSION: ${{needs.get-nanvix-info.outputs.nanvix_version }}
     steps:
       - uses: actions/checkout@v7
+
+      - name: Compute release tag
+        id: tag
+        run: |
+          if [[ '${{ inputs.use-release-sha }}' == 'true' ]]; then
+            SHORT_SHA="${GITHUB_SHA::7}"
+            RELEASE_TAG="${PACKAGE_VERSION}-nanvix-${NANVIX_VERSION}-${SHORT_SHA}"
+          else
+            RELEASE_TAG="${PACKAGE_VERSION}-nanvix-${NANVIX_VERSION}"
+          fi
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "Release tag: $RELEASE_TAG"
 
       - name: Download all build artifacts
         id: download-artifacts
@@ -876,23 +902,7 @@ jobs:
         continue-on-error: true
         with:
           path: release-artifacts
-          pattern: ${{ needs.get-nanvix-info.outputs.package_name }}-${{ needs.get-nanvix-info.outputs.package_version }}-*
-
-      - name: Prepare release assets
-        run: |
-          set -euo pipefail
-          mkdir -p release-assets
-          if [[ "${{ steps.download-artifacts.outcome }}" == "failure" ]]; then
-            echo "::warning::Artifact download failed — possible API or network issue"
-          fi
-          find release-artifacts \( -name "*.tar.bz2" -o -name "*.tar.gz" -o -name "*.zip" \) -exec cp {} release-assets/ \; 2>/dev/null || true
-          ASSET_COUNT=$(find release-assets \( -name "*.tar.bz2" -o -name "*.tar.gz" \) 2>/dev/null | wc -l)
-          echo "Found $ASSET_COUNT release asset(s)"
-          if [[ "$ASSET_COUNT" -eq 0 ]]; then
-            echo "::error::No release assets found — all matrix builds may have failed"
-            exit 1
-          fi
-          ls -la release-assets/
+          pattern: ${{ env.PACKAGE_NAME }}-${{ env.PACKAGE_VERSION }}-*
 
       - name: Generate lockfile
         env:
@@ -904,18 +914,13 @@ jobs:
           python3 -m pip install "$WHEEL_URL"
           nanvix-zutil resolve > /dev/null
           nanvix-zutil lock --shallow
-          cp .nanvix/nanvix.lock release-assets/nanvix.lock
 
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
+          RELEASE_TAG: ${{ steps.tag.outputs.release_tag }}
         run: |
-          RELEASE_TAG="${{ needs.get-nanvix-info.outputs.package_version }}-nanvix-${{ needs.get-nanvix-info.outputs.nanvix_version }}"
-
-          if gh release view "$RELEASE_TAG" &>/dev/null; then
-            echo "Release $RELEASE_TAG already exists — skipping"
-            exit 0
-          fi
+          set -euo pipefail
 
           printf -v NOTES 'Automated build from branch %s.\n\n**Build:** [#%s](%s)\n**Commit:** [%s](%s)\n**Nanvix:** [%s](%s)' \
             "${{ github.ref_name }}" \
@@ -930,18 +935,40 @@ jobs:
             printf -v NOTES '%s\n\n%s' "$NOTES" "${{ inputs.release-notes-extra }}"
           fi
 
-          gh release create "$RELEASE_TAG" \
-            --title "Build ${GITHUB_SHA::7}" \
-            --notes "$NOTES" \
-            --latest \
-            release-assets/*
+          mapfile -t assets < <(find release-artifacts \( -name '*.tar.gz' -o -name '*.tar.bz2' -o -name '*.zip' \) -print)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "::error::No release assets found — all builds may have failed"
+            exit 1
+          fi
+          assets+=( .nanvix/nanvix.lock )
+
+          # Idempotent: if the release already exists (e.g., rerun or scheduled
+          # trigger for the same commit), update it instead of failing.
+          if gh release view "$RELEASE_TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" \
+              --repo "${{ github.repository }}" \
+              --title "Build ${GITHUB_SHA::7}" \
+              --notes "$NOTES" \
+              --latest
+            gh release upload "$RELEASE_TAG" \
+              --repo "${{ github.repository }}" \
+              --clobber \
+              "${assets[@]}"
+          else
+            gh release create "$RELEASE_TAG" \
+              --repo "${{ github.repository }}" \
+              --title "Build ${GITHUB_SHA::7}" \
+              --notes "$NOTES" \
+              --latest \
+              "${assets[@]}"
+          fi
 
       - name: Trigger downstream workflows
         if: ${{ success() && inputs.downstream-dispatches != '[]' }}
         env:
           GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
           DISPATCHES: ${{ inputs.downstream-dispatches }}
-          RELEASE_TAG: ${{ needs.get-nanvix-info.outputs.package_version }}-nanvix-${{ needs.get-nanvix-info.outputs.nanvix_version }}
+          RELEASE_TAG: ${{ steps.tag.outputs.release_tag }}
           NANVIX_SHA: ${{ needs.get-nanvix-info.outputs.nanvix_sha }}
         run: |
           echo "$DISPATCHES" | jq -c '.[]' | while read -r entry; do
