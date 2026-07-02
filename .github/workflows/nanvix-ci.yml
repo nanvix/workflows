@@ -127,7 +127,7 @@ on:
       windows-release:
         description: >
           Publish a release targeting Windows by replacing nanvix ELF binaries
-          with windows EXEs. Only targets x86-microvm-standalone-256mb
+          with windows EXEs.
         required: false
         default: false
         type: boolean
@@ -995,24 +995,30 @@ jobs:
   # -------------------------------------------------------------------
   windows-release:
     needs: [get-nanvix-info, release]
-    if: ${{ inputs.windows-release }}
-      && success()
+    if: >-
+      !cancelled()
+      && needs.release.result == 'success'
+      && inputs.windows-release
       && github.event_name != 'pull_request'
+      && contains(fromJSON(inputs.process-modes), 'standalone')
     runs-on: ubuntu-latest
     env:
       RELEASE_TAG: ${{ needs.release.outputs.release_tag }}
       NANVIX_TAG: ${{ needs.get-nanvix-info.outputs.nanvix_tag }}
+      PACKAGE_NAME: ${{ needs.get-nanvix-info.outputs.package_name }}
+      PACKAGE_VERSION: ${{ needs.get-nanvix-info.outputs.package_version }}
     steps:
       - uses: actions/checkout@v7
 
-      - name: Download standalone tarball from release
+      - name: Download standalone tarballs from release
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           gh release download "$RELEASE_TAG" \
             --repo "${{ github.repository }}" \
-            --pattern "*standalone*.tar.gz" \
+            --pattern "${PACKAGE_NAME}-${PACKAGE_VERSION}-*-standalone-*.tar.gz" \
+            --pattern "${PACKAGE_NAME}-${PACKAGE_VERSION}-*-standalone-*.tar.bz2" \
             --dir release-download
           ls -la release-download/
 
@@ -1023,59 +1029,77 @@ jobs:
           set -euo pipefail
           gh release download "$NANVIX_TAG" \
             --repo nanvix/nanvix \
-            --pattern "nanvix-windows-x86-microvm-standalone*256mb*.zip" \
+            --pattern "nanvix-windows-*-standalone-*.zip" \
             --dir nanvix-windows
           ls -la nanvix-windows/
 
-      - name: Create Windows zip
+      - name: Repackage standalone tarballs to Windows zips
         run: |
           set -euo pipefail
+          shopt -s nullglob
 
-          # Extract the standalone tarball
-          TARBALL=$(find release-download -name "*standalone*.tar.gz" | head -1)
-          if [ -z "$TARBALL" ] || [ ! -f "$TARBALL" ]; then
-            echo "::error::No standalone .tar.gz tarball found in release-download"
+          TARBALLS=(release-download/*standalone*.tar.gz release-download/*standalone*.tar.bz2)
+          if [ ${#TARBALLS[@]} -eq 0 ]; then
+            echo "::error::No standalone tarballs found in release-download"
             exit 1
           fi
-          echo "Using tarball: $TARBALL"
-          mkdir -p extract
-          tar -xzf "$TARBALL" -C extract
 
-          # Find the extracted directory name
-          DIST_DIR=$(find extract -mindepth 1 -maxdepth 1 -type d | head -1)
-          DIR_NAME=$(basename "$DIST_DIR")
-          echo "Distribution directory: $DIR_NAME"
+          : > upload-list.txt
+          for TARBALL in "${TARBALLS[@]}"; do
+            echo "::group::Repackaging $TARBALL"
+            WORK=$(mktemp -d)
+            tar -xf "$TARBALL" -C "$WORK"
+            DIST_DIR=$(find "$WORK" -mindepth 1 -maxdepth 1 -type d | head -1)
+            DIR_NAME=$(basename "$DIST_DIR")
 
-          # Extract Nanvix Windows zip to get host binaries
-          WINZIP=$(find nanvix-windows -name "*.zip" | head -1)
-          echo "Using Nanvix Windows zip: $WINZIP"
-          mkdir -p nanvix-win-extract
-          unzip -q "$WINZIP" -d nanvix-win-extract
+            # Derive matrix suffix (e.g. x86-microvm-standalone-256mb)
+            # by stripping the ${PACKAGE_NAME}-${PACKAGE_VERSION}- prefix.
+            SUFFIX=${DIR_NAME#"${PACKAGE_NAME}-${PACKAGE_VERSION}-"}
+            WINZIP=$(find nanvix-windows -name "nanvix-windows-${SUFFIX}*.zip" | head -1)
+            if [ -z "$WINZIP" ]; then
+              echo "::warning::No matching nanvix-windows zip for $SUFFIX; skipping"
+              echo "::endgroup::"
+              continue
+            fi
+            echo "Using Nanvix Windows zip: $WINZIP"
 
-          # Replace Linux host binaries with Windows host binaries
-          rm -f "$DIST_DIR/bin/nanvixd.elf"
-          cp nanvix-win-extract/nanvixd.exe "$DIST_DIR/bin/nanvixd.exe"
-          cp nanvix-win-extract/kernel.elf "$DIST_DIR/bin/kernel.elf"
+            WINEX=$(mktemp -d)
+            unzip -q "$WINZIP" -d "$WINEX"
 
-          # Replace the Linux-built README with the top-level
-          # README.md (which documents the Windows workflow,
-          # including snapshot generation and warm restore).
-          cp README.md "$DIST_DIR/README.md"
+            # Swap Linux host binaries for Windows equivalents.
+            rm -f "$DIST_DIR/bin/nanvixd.elf"
+            cp "$WINEX/nanvixd.exe" "$DIST_DIR/bin/nanvixd.exe"
+            cp "$WINEX/kernel.elf" "$DIST_DIR/bin/kernel.elf"
 
-          # Create the Windows zip
-          ZIP_NAME="${DIR_NAME}.zip"
-          (cd extract && zip -r "../${ZIP_NAME}" "$DIR_NAME")
-          echo "zip_name=$ZIP_NAME" >> "$GITHUB_ENV"
-          echo "Created: $ZIP_NAME ($(stat -c%s "$ZIP_NAME") bytes)"
+            # Replace the Linux-built README with the caller's top-level
+            # README (assumed to document the Windows workflow).
+            if [ -e README.md ]; then
+              cp README.md "$DIST_DIR/README.md"
+            fi
 
-      - name: Upload zip to release
+            ZIP_NAME="${DIR_NAME}.zip"
+            (cd "$WORK" && zip -r "$GITHUB_WORKSPACE/${ZIP_NAME}" "$DIR_NAME")
+            echo "Created: $ZIP_NAME ($(stat -c%s "$ZIP_NAME") bytes)"
+            echo "$ZIP_NAME" >> upload-list.txt
+            echo "::endgroup::"
+          done
+
+          if [ ! -s upload-list.txt ]; then
+            echo "::error::No Windows zips produced"
+            exit 1
+          fi
+
+      - name: Upload zips to release
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload "$RELEASE_TAG" \
-            --repo "${{ github.repository }}" \
-            "${{ env.zip_name }}" --clobber
-          echo "Uploaded ${{ env.zip_name }} to release $RELEASE_TAG"
+          set -euo pipefail
+          while IFS= read -r zip; do
+            gh release upload "$RELEASE_TAG" \
+              --repo "${{ github.repository }}" \
+              "$zip" --clobber
+            echo "Uploaded $zip to release $RELEASE_TAG"
+          done < upload-list.txt
 
   # -------------------------------------------------------------------
   # Pin nanvix version in consumer repo
