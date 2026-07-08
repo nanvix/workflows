@@ -1,15 +1,14 @@
 [
-  "nanvix/zlib",
-  "nanvix/bzip2",
-  "nanvix/sqlite",
-  "nanvix/libffi",
-  "nanvix/openssl",
-  "nanvix/libxml2",
-  "nanvix/libxslt",
-  "nanvix/lxml",
-  "nanvix/cpython",
-  "nanvix/quickjs",
-  "nanvix/posix-tests",
-  "nanvix/nanvix-python",
-  "nanvix/xz"
+    "nanvix/zlib",
+    "nanvix/bzip2",
+    "nanvix/sqlite",
+    "nanvix/libffi",
+    "nanvix/openssl",
+    "nanvix/libxml2",
+    "nanvix/libxslt",
+    "nanvix/lxml",
+    "nanvix/cpython",
+    "nanvix/quickjs",
+    "nanvix/nanvix-python",
+    "nanvix/xz"
 ]
