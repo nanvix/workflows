@@ -1015,24 +1015,24 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
           PLATFORMS_JSON: ${{ inputs.platforms }}
           MEM_SIZES_JSON: ${{ inputs.memory-sizes }}
+
         run: |
           set -euo pipefail
+          shopt -s nullglob
 
           # in lieu of matrix expansion, iterate over inputs
-          # This is as simple as I could get it without latent bugs.
           mapfile -t PLATFORMS < <(echo "$PLATFORMS_JSON" | jq -r '.[]')
           mapfile -t MEM_SIZES < <(echo "$MEM_SIZES_JSON" | jq -r '.[]')
 
-          # Map out patterns
+          # gh --pattern list, one per (platform, memsize) tuple
           patterns=()
           for platform in "${PLATFORMS[@]}"; do
             for memsize in "${MEM_SIZES[@]}"; do
-                patterns+=(--pattern "*${platform}-standalone-${memsize}.tar.gz")
-                patterns+=(--pattern "*${platform}-standalone-${memsize}.tar.bz2")
+              patterns+=(--pattern "*${platform}-standalone-${memsize}.tar.gz")
+              patterns+=(--pattern "*${platform}-standalone-${memsize}.tar.bz2")
             done
           done
 
-          # back out on empty input
           if (( ${#patterns[@]} == 0 )); then
             echo "::error::Empty patterns; refusing to download"
             echo "PLATFORMS_JSON=$PLATFORMS_JSON"
@@ -1040,121 +1040,89 @@ jobs:
             exit 1
           fi
 
-          # Download matching releases
+          # downstream linux tarballs
           gh release download "$RELEASE_TAG" \
             --repo "${{ github.repository }}" \
             "${patterns[@]}" \
             --dir release-download
           ls -la release-download/
 
-      - name: Download Nanvix Windows binaries
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
+          # upstream nanvix windows zips
           gh release download "$NANVIX_TAG" \
             --repo nanvix/nanvix \
             --pattern "nanvix-windows-*-standalone-*.zip" \
             --dir nanvix-windows
           ls -la nanvix-windows/
 
-      - name: Repackage standalone tarballs to Windows zips
-        env:
-          PLATFORMS_JSON: ${{ inputs.platforms }}
-          MEM_SIZES_JSON: ${{ inputs.memory-sizes }}
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-
-          mapfile -t PLATFORMS < <(echo "$PLATFORMS_JSON" | jq -r '.[]')
-          mapfile -t MEM_SIZES < <(echo "$MEM_SIZES_JSON" | jq -r '.[]')
-
-          : > upload-list.txt
+          # resolve (platform, memsize) tuples to (linux_tar, windows_zip) pairs.
+          # nullglob drops non-matching globs; empty JOBS => nothing to do.
+          JOBS=()
           for PLATFORM in "${PLATFORMS[@]}"; do
             for MEMORY in "${MEM_SIZES[@]}"; do
-              # matches both <pkg>-<platform>-standalone-<memsize>.tar.<ext>
-              # and bare <platform>-standalone-<memsize>.tar.<ext>.
-              TARBALLS=()
-              for f in release-download/*"${PLATFORM}"-standalone-"${MEMORY}".tar.gz \
-                       release-download/*"${PLATFORM}"-standalone-"${MEMORY}".tar.bz2; do
-                TARBALLS+=("$f")
-              done
-              for TARBALL in "${TARBALLS[@]}"; do
-                echo "::group::Repackaging $TARBALL"
-                WORK=$(mktemp -d)
-                tar -xf "$TARBALL" -C "$WORK"
-
-                # If tar has a single top-level dir, use it; otherwise derive
-                # a name from the tarball itself and treat WORK as the dist.
-                # NB: output zip layout differs between the two cases. Fine
-                # today; revisit if consumers grow layout expectations.
-                mapfile -t TOP < <(find "$WORK" -mindepth 1 -maxdepth 1)
-                if [ ${#TOP[@]} -eq 1 ] && [ -d "${TOP[0]}" ]; then
-                  DIST_DIR="${TOP[0]}"
-                  DIR_NAME=$(basename "$DIST_DIR")
-                else
-                  DIST_DIR="$WORK"
-                  DIR_NAME=$(basename "$TARBALL" | sed -E 's/\.tar\.(gz|bz2)$//')
-                fi
-
-                if [ ! -e "$DIST_DIR/bin/nanvixd.elf" ]; then
-                  echo "::warning::$TARBALL has no bin/nanvixd.elf; skipping"
-                  echo "::endgroup::"
-                  continue
-                fi
-
-                NAME="nanvix-windows-*${PLATFORM}-standalone-*${MEMORY}*.zip"
-                WINZIP=$(find nanvix-windows -name "$NAME" | head -1)
-                if [ -z "$WINZIP" ]; then
-                  echo "::warning::No matching nanvix-windows zip for ${PLATFORM}-${MEMORY}; skipping"
-                  echo "::endgroup::"
-                  continue
-                fi
-                echo "Using Nanvix Windows zip: $WINZIP"
-
-                WINEX=$(mktemp -d)
-                unzip -q "$WINZIP" -d "$WINEX"
-
-                # Swap Linux host binaries for Windows equivalents.
-                rm -f "$DIST_DIR/bin/nanvixd.elf"
-                cp "$WINEX/nanvixd.exe" "$DIST_DIR/bin/nanvixd.exe"
-                cp "$WINEX/kernel.elf" "$DIST_DIR/bin/kernel.elf"
-
-                # Replace the Linux-built README with the caller's top-level
-                # README (assumed to document the Windows workflow).
-                if [ -e README.md ]; then
-                  cp README.md "$DIST_DIR/README.md"
-                fi
-
-                ZIP_NAME="${DIR_NAME}.zip"
-                if [ "$DIST_DIR" = "$WORK" ]; then
-                  (cd "$DIST_DIR" && zip -r "$GITHUB_WORKSPACE/${ZIP_NAME}" .)
-                else
-                  (cd "$WORK" && zip -r "$GITHUB_WORKSPACE/${ZIP_NAME}" "$DIR_NAME")
-                fi
-                echo "Created: $ZIP_NAME ($(stat -c%s "$ZIP_NAME") bytes)"
-                echo "$ZIP_NAME" >> upload-list.txt
-                echo "::endgroup::"
+              for LIN in release-download/*"${PLATFORM}"-standalone-"${MEMORY}".tar.gz \
+                        release-download/*"${PLATFORM}"-standalone-"${MEMORY}".tar.bz2; do
+                for WIN in nanvix-windows/nanvix-windows-*"${PLATFORM}"-standalone-*"${MEMORY}"*.zip; do
+                  JOBS+=("${PLATFORM}|${MEMORY}|${LIN}|${WIN}")
+                done
               done
             done
           done
 
-          if [ ! -s upload-list.txt ]; then
+          if (( ${#JOBS[@]} == 0 )); then
+            echo "::error::No (linux tarball, windows zip) pairs matched inputs"
+            exit 1
+          fi
+
+          # process each pair. TEMP: only nanvix-python uses this workflow today,
+          # and it ships a "${PLATFORM}-standalone-${MEMORY}" wrapper dir that mxc
+          # hardcodes (see microsoft/mxc src/backends/nanvix/binaries/build.rs).
+          # revisit if that assumption changes.
+          TO_UPLOAD=()
+          for JOB in "${JOBS[@]}"; do
+            IFS='|' read -r PLATFORM MEMORY LIN WIN <<< "$JOB"
+            DIR_NAME="${PLATFORM}-standalone-${MEMORY}"
+            echo "::group::Repackaging ${DIR_NAME} (linux=${LIN} windows=${WIN})"
+
+            WORK=$(mktemp -d)
+            tar -xf "$LIN" -C "$WORK"
+            DIST_DIR="$WORK/$DIR_NAME"
+            if [ ! -d "$DIST_DIR" ]; then
+              echo "::warning::${LIN} missing ${DIR_NAME}/ wrapper; skipping"
+              echo "::endgroup::"
+              continue
+            fi
+
+            WINEX=$(mktemp -d)
+            unzip -q "$WIN" -d "$WINEX"
+
+            # swap Linux host binaries for Windows equivalents.
+            rm -f "$DIST_DIR/bin/nanvixd.elf"
+            cp "$WINEX/nanvixd.exe" "$DIST_DIR/bin/nanvixd.exe"
+            cp "$WINEX/kernel.elf"  "$DIST_DIR/bin/kernel.elf"
+
+            # caller-side README documents the Windows workflow; prefer it if present.
+            if [ -e README.md ]; then
+              cp README.md "$DIST_DIR/README.md"
+            fi
+
+            ZIP_NAME="${DIR_NAME}.zip"
+            (cd "$WORK" && zip -qr "$GITHUB_WORKSPACE/${ZIP_NAME}" "$DIR_NAME")
+            echo "Created: ${ZIP_NAME} ($(stat -c%s "${GITHUB_WORKSPACE}/${ZIP_NAME}") bytes)"
+            TO_UPLOAD+=("$ZIP_NAME")
+            echo "::endgroup::"
+          done
+
+          if (( ${#TO_UPLOAD[@]} == 0 )); then
             echo "::error::No Windows zips produced"
             exit 1
           fi
 
-      - name: Upload zips to release
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          while IFS= read -r zip; do
+          for ZIP in "${TO_UPLOAD[@]}"; do
             gh release upload "$RELEASE_TAG" \
               --repo "${{ github.repository }}" \
-              "$zip" --clobber
-            echo "Uploaded $zip to release $RELEASE_TAG"
-          done < upload-list.txt
+              "$ZIP" --clobber
+            echo "Uploaded ${ZIP} to release ${RELEASE_TAG}"
+          done
 
   # -------------------------------------------------------------------
   # Pin nanvix version in consumer repo
