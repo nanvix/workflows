@@ -1017,8 +1017,8 @@ jobs:
           set -euo pipefail
           gh release download "$RELEASE_TAG" \
             --repo "${{ github.repository }}" \
-            --pattern "${PACKAGE_NAME}-${PACKAGE_VERSION}-*-standalone-*.tar.gz" \
-            --pattern "${PACKAGE_NAME}-${PACKAGE_VERSION}-*-standalone-*.tar.bz2" \
+            --pattern "*-standalone-*.tar.gz" \
+            --pattern "*-standalone-*.tar.bz2" \
             --dir release-download
           ls -la release-download/
 
@@ -1052,12 +1052,15 @@ jobs:
             DIST_DIR=$(find "$WORK" -mindepth 1 -maxdepth 1 -type d | head -1)
             DIR_NAME=$(basename "$DIST_DIR")
 
-            # Derive matrix suffix (e.g. x86-microvm-standalone-256mb)
-            # by stripping the ${PACKAGE_NAME}-${PACKAGE_VERSION}- prefix.
-            SUFFIX=${DIR_NAME#"${PACKAGE_NAME}-${PACKAGE_VERSION}-"}
-            WINZIP=$(find nanvix-windows -name "nanvix-windows-${SUFFIX}*.zip" | head -1)
+            # DIR_NAME is [<pkg>-]<platform>-standalone-<memsize>. Extract
+            # the join key components; the upstream windows zip carries
+            # extra tokens (arch prefix, -release- infix, sha suffix) so
+            # glob loosely around each.
+            MEMORY=${DIR_NAME##*-standalone-}
+            PLATFORM=${DIR_NAME%-standalone-*}; PLATFORM=${PLATFORM##*-}
+            WINZIP=$(find nanvix-windows -name "nanvix-windows-*${PLATFORM}-standalone-*${MEMORY}*.zip" | head -1)
             if [ -z "$WINZIP" ]; then
-              echo "::warning::No matching nanvix-windows zip for $SUFFIX; skipping"
+              echo "::warning::No matching nanvix-windows zip for ${PLATFORM}-${MEMORY}; skipping"
               echo "::endgroup::"
               continue
             fi
