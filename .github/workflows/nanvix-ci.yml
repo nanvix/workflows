@@ -1015,7 +1015,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
           PLATFORMS_JSON: ${{ inputs.platforms }}
           MEM_SIZES_JSON: ${{ inputs.memory-sizes }}
-          ARCHS_JSON: ${{ inputs.target-archs }}
         run: |
           set -euo pipefail
 
@@ -1023,16 +1022,13 @@ jobs:
           # This is as simple as I could get it without latent bugs.
           mapfile -t PLATFORMS < <(echo "$PLATFORMS_JSON" | jq -r '.[]')
           mapfile -t MEM_SIZES < <(echo "$MEM_SIZES_JSON" | jq -r '.[]')
-          mapfile -t ARCHS < <(echo "$ARCHS_JSON" | jq -r '.[]')
 
           # Map out patterns
           patterns=()
           for platform in "${PLATFORMS[@]}"; do
             for memsize in "${MEM_SIZES[@]}"; do
-                for arch in "${ARCHS[@]}"; do
-                    patterns+=(--pattern "*${arch}-${platform}-standalone-${memsize}.tar.gz")
-                    patterns+=(--pattern "*${arch}-${platform}-standalone-${memsize}.tar.bz2")
-              done
+                patterns+=(--pattern "*${platform}-standalone-${memsize}.tar.gz")
+                patterns+=(--pattern "*${platform}-standalone-${memsize}.tar.bz2")
             done
           done
 
@@ -1041,7 +1037,6 @@ jobs:
             echo "::error::Empty patterns; refusing to download"
             echo "PLATFORMS_JSON=$PLATFORMS_JSON"
             echo "MEM_SIZES=$MEM_SIZES_JSON"
-            echo "ARCHS=$ARCHS_JSON"
             exit 1
           fi
 
@@ -1064,55 +1059,84 @@ jobs:
           ls -la nanvix-windows/
 
       - name: Repackage standalone tarballs to Windows zips
+        env:
+          PLATFORMS_JSON: ${{ inputs.platforms }}
+          MEM_SIZES_JSON: ${{ inputs.memory-sizes }}
         run: |
           set -euo pipefail
           shopt -s nullglob
 
-          TARBALLS=(release-download/*standalone*.tar.gz release-download/*standalone*.tar.bz2)
-          if [ ${#TARBALLS[@]} -eq 0 ]; then
-            echo "::error::No standalone tarballs found in release-download"
-            exit 1
-          fi
+          mapfile -t PLATFORMS < <(echo "$PLATFORMS_JSON" | jq -r '.[]')
+          mapfile -t MEM_SIZES < <(echo "$MEM_SIZES_JSON" | jq -r '.[]')
 
           : > upload-list.txt
-          for TARBALL in "${TARBALLS[@]}"; do
-            echo "::group::Repackaging $TARBALL"
-            WORK=$(mktemp -d)
-            tar -xf "$TARBALL" -C "$WORK"
+          for PLATFORM in "${PLATFORMS[@]}"; do
+            for MEMORY in "${MEM_SIZES[@]}"; do
+              # matches both <pkg>-<platform>-standalone-<memsize>.tar.<ext>
+              # and bare <platform>-standalone-<memsize>.tar.<ext>.
+              TARBALLS=()
+              for f in release-download/*"${PLATFORM}"-standalone-"${MEMORY}".tar.gz \
+                       release-download/*"${PLATFORM}"-standalone-"${MEMORY}".tar.bz2; do
+                TARBALLS+=("$f")
+              done
+              for TARBALL in "${TARBALLS[@]}"; do
+                echo "::group::Repackaging $TARBALL"
+                WORK=$(mktemp -d)
+                tar -xf "$TARBALL" -C "$WORK"
 
-            DIST_DIR=$(find "$WORK" -mindepth 1 -maxdepth 1 -type d | head -1)
-            DIR_NAME=$(basename "$DIST_DIR")
-            PLATFORM=$(echo "$DIR_NAME" | sed -E 's/-standalone-.*//; s/.*-//')
-            MEMORY=$(echo "$DIR_NAME" | sed -E 's/.*-standalone-//')
-            NAME="nanvix-windows-*${PLATFORM}-standalone*${MEMORY}*.zip"
-            WINZIP=$(find nanvix-windows -name $NAME | head -1)
+                # If tar has a single top-level dir, use it; otherwise derive
+                # a name from the tarball itself and treat WORK as the dist.
+                # NB: output zip layout differs between the two cases. Fine
+                # today; revisit if consumers grow layout expectations.
+                mapfile -t TOP < <(find "$WORK" -mindepth 1 -maxdepth 1)
+                if [ ${#TOP[@]} -eq 1 ] && [ -d "${TOP[0]}" ]; then
+                  DIST_DIR="${TOP[0]}"
+                  DIR_NAME=$(basename "$DIST_DIR")
+                else
+                  DIST_DIR="$WORK"
+                  DIR_NAME=$(basename "$TARBALL" | sed -E 's/\.tar\.(gz|bz2)$//')
+                fi
 
-            if [ -z "$WINZIP" ]; then
-              echo "::warning::No matching nanvix-windows zip for ${PLATFORM}-${MEMORY}; skipping"
-              echo "::endgroup::"
-              continue
-            fi
-            echo "Using Nanvix Windows zip: $WINZIP"
+                if [ ! -e "$DIST_DIR/bin/nanvixd.elf" ]; then
+                  echo "::warning::$TARBALL has no bin/nanvixd.elf; skipping"
+                  echo "::endgroup::"
+                  continue
+                fi
 
-            WINEX=$(mktemp -d)
-            unzip -q "$WINZIP" -d "$WINEX"
+                NAME="nanvix-windows-*${PLATFORM}-standalone-*${MEMORY}*.zip"
+                WINZIP=$(find nanvix-windows -name "$NAME" | head -1)
+                if [ -z "$WINZIP" ]; then
+                  echo "::warning::No matching nanvix-windows zip for ${PLATFORM}-${MEMORY}; skipping"
+                  echo "::endgroup::"
+                  continue
+                fi
+                echo "Using Nanvix Windows zip: $WINZIP"
 
-            # Swap Linux host binaries for Windows equivalents.
-            rm -f "$DIST_DIR/bin/nanvixd.elf"
-            cp "$WINEX/nanvixd.exe" "$DIST_DIR/bin/nanvixd.exe"
-            cp "$WINEX/kernel.elf" "$DIST_DIR/bin/kernel.elf"
+                WINEX=$(mktemp -d)
+                unzip -q "$WINZIP" -d "$WINEX"
 
-            # Replace the Linux-built README with the caller's top-level
-            # README (assumed to document the Windows workflow).
-            if [ -e README.md ]; then
-              cp README.md "$DIST_DIR/README.md"
-            fi
+                # Swap Linux host binaries for Windows equivalents.
+                rm -f "$DIST_DIR/bin/nanvixd.elf"
+                cp "$WINEX/nanvixd.exe" "$DIST_DIR/bin/nanvixd.exe"
+                cp "$WINEX/kernel.elf" "$DIST_DIR/bin/kernel.elf"
 
-            ZIP_NAME="${DIR_NAME}.zip"
-            (cd "$WORK" && zip -r "$GITHUB_WORKSPACE/${ZIP_NAME}" "$DIR_NAME")
-            echo "Created: $ZIP_NAME ($(stat -c%s "$ZIP_NAME") bytes)"
-            echo "$ZIP_NAME" >> upload-list.txt
-            echo "::endgroup::"
+                # Replace the Linux-built README with the caller's top-level
+                # README (assumed to document the Windows workflow).
+                if [ -e README.md ]; then
+                  cp README.md "$DIST_DIR/README.md"
+                fi
+
+                ZIP_NAME="${DIR_NAME}.zip"
+                if [ "$DIST_DIR" = "$WORK" ]; then
+                  (cd "$DIST_DIR" && zip -r "$GITHUB_WORKSPACE/${ZIP_NAME}" .)
+                else
+                  (cd "$WORK" && zip -r "$GITHUB_WORKSPACE/${ZIP_NAME}" "$DIR_NAME")
+                fi
+                echo "Created: $ZIP_NAME ($(stat -c%s "$ZIP_NAME") bytes)"
+                echo "$ZIP_NAME" >> upload-list.txt
+                echo "::endgroup::"
+              done
+            done
           done
 
           if [ ! -s upload-list.txt ]; then
