@@ -1165,8 +1165,8 @@ jobs:
             "${{ needs.release.result }}" \
             "${{ needs.update-nanvix-version.result }}"
           do
-            if [[ "$result" == "failure" || "$result" == "cancelled" ]]; then
-              echo "Upstream job failed or was cancelled: $result"
+            if [[ "$result" != "success" && "$result" != "skipped" ]]; then
+              echo "Upstream job did not succeed: $result"
               exit 1
             fi
           done
