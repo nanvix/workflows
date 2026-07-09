@@ -1014,23 +1014,38 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
           PLATFORMS_JSON: ${{ inputs.platforms }}
-          MEMORY_SIZES_JSON: ${{ inputs.memory-sizes }}
+          MEM_SIZES_JSON: ${{ inputs.memory-sizes }}
+          ARCHS_JSON: ${{ inputs.target-archs }}
         run: |
           set -euo pipefail
-          # Constrain to the platform x memory matrix so we only pull
-          # tarballs this job is set up to repackage. No trailing wildcard
-          # keeps buildroot variants out.
+
+          # in lieu of matrix expansion, iterate over inputs
+          # This is as simple as I could get it without latent bugs.
+          mapfile -t PLATFORMS < <(echo "$PLATFORMS_JSON" | jq -r '.[]')
+          mapfile -t MEM_SIZES < <(echo "$MEM_SIZES_JSON" | jq -r '.[]')
+          mapfile -t ARCHS < <(echo "$ARCHS_JSON" | jq -r '.[]')
+
+          # Map out patterns
           patterns=()
-          while IFS= read -r platform; do
-            while IFS= read -r memory; do
-              patterns+=(--pattern "*${platform}-standalone-${memory}.tar.gz")
-              patterns+=(--pattern "*${platform}-standalone-${memory}.tar.bz2")
-            done < <(jq -r '.[]' <<<"$MEMORY_SIZES_JSON")
-          done < <(jq -r '.[]' <<<"$PLATFORMS_JSON")
-          if [[ ${#patterns[@]} -eq 0 ]]; then
-            echo "::error::empty platforms/memory-sizes matrix; refusing to download"
+          for platform in "${PLATFORMS[@]}"; do
+            for memsize in "${MEM_SIZES[@]}"; do
+                for arch in "${ARCHS[@]}"; do
+                    patterns+=(--pattern "*${arch}-${platform}-standalone-${memsize}.tar.gz")
+                    patterns+=(--pattern "*${arch}-${platform}-standalone-${memsize}.tar.bz2")
+              done
+            done
+          done
+
+          # back out on empty input
+          if (( ${#patterns[@]} == 0 )); then
+            echo "::error::Empty patterns; refusing to download"
+            echo "PLATFORMS_JSON=$PLATFORMS_JSON"
+            echo "MEM_SIZES=$MEM_SIZES_JSON"
+            echo "ARCHS=$ARCHS_JSON"
             exit 1
           fi
+
+          # Download matching releases
           gh release download "$RELEASE_TAG" \
             --repo "${{ github.repository }}" \
             "${patterns[@]}" \
@@ -1064,15 +1079,14 @@ jobs:
             echo "::group::Repackaging $TARBALL"
             WORK=$(mktemp -d)
             tar -xf "$TARBALL" -C "$WORK"
+
             DIST_DIR=$(find "$WORK" -mindepth 1 -maxdepth 1 -type d | head -1)
             DIR_NAME=$(basename "$DIST_DIR")
+            PLATFORM=$(echo "$DIR_NAME" | sed -E 's/-standalone-.*//; s/.*-//')
+            MEMORY=$(echo "$DIR_NAME" | sed -E 's/.*-standalone-//')
+            NAME="nanvix-windows-*${PLATFORM}-standalone*${MEMORY}*.zip"
+            WINZIP=$(find nanvix-windows -name $NAME | head -1)
 
-            # DIR_NAME ends in <platform>-standalone-<memory> per the
-            # download-step glob. Same core in the winzip pattern; wildcards
-            # absorb nanvix's arch prefix / -release- infix / trailing sha.
-            PLATFORM=$(sed -E 's/-standalone-.*//; s/.*-//' <<<"$DIR_NAME")
-            MEMORY=$(sed -E 's/.*-standalone-//' <<<"$DIR_NAME")
-            WINZIP=$(find nanvix-windows -name "nanvix-windows-*${PLATFORM}-standalone*${MEMORY}*.zip" | head -1)
             if [ -z "$WINZIP" ]; then
               echo "::warning::No matching nanvix-windows zip for ${PLATFORM}-${MEMORY}; skipping"
               echo "::endgroup::"
