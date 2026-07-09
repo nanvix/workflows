@@ -1013,12 +1013,27 @@ jobs:
       - name: Download standalone tarballs from release
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          PLATFORMS_JSON: ${{ inputs.platforms }}
+          MEMORY_SIZES_JSON: ${{ inputs.memory-sizes }}
         run: |
           set -euo pipefail
+          # Constrain to the platform x memory matrix so we only pull
+          # tarballs this job is set up to repackage. No trailing wildcard
+          # keeps buildroot variants out.
+          patterns=()
+          while IFS= read -r platform; do
+            while IFS= read -r memory; do
+              patterns+=(--pattern "*${platform}-standalone-${memory}.tar.gz")
+              patterns+=(--pattern "*${platform}-standalone-${memory}.tar.bz2")
+            done < <(jq -r '.[]' <<<"$MEMORY_SIZES_JSON")
+          done < <(jq -r '.[]' <<<"$PLATFORMS_JSON")
+          if [[ ${#patterns[@]} -eq 0 ]]; then
+            echo "::error::empty platforms/memory-sizes matrix; refusing to download"
+            exit 1
+          fi
           gh release download "$RELEASE_TAG" \
             --repo "${{ github.repository }}" \
-            --pattern "${PACKAGE_NAME}-${PACKAGE_VERSION}-*-standalone-*.tar.gz" \
-            --pattern "${PACKAGE_NAME}-${PACKAGE_VERSION}-*-standalone-*.tar.bz2" \
+            "${patterns[@]}" \
             --dir release-download
           ls -la release-download/
 
@@ -1052,12 +1067,14 @@ jobs:
             DIST_DIR=$(find "$WORK" -mindepth 1 -maxdepth 1 -type d | head -1)
             DIR_NAME=$(basename "$DIST_DIR")
 
-            # Derive matrix suffix (e.g. x86-microvm-standalone-256mb)
-            # by stripping the ${PACKAGE_NAME}-${PACKAGE_VERSION}- prefix.
-            SUFFIX=${DIR_NAME#"${PACKAGE_NAME}-${PACKAGE_VERSION}-"}
-            WINZIP=$(find nanvix-windows -name "nanvix-windows-${SUFFIX}*.zip" | head -1)
+            # DIR_NAME ends in <platform>-standalone-<memory> per the
+            # download-step glob. Same core in the winzip pattern; wildcards
+            # absorb nanvix's arch prefix / -release- infix / trailing sha.
+            PLATFORM=$(sed -E 's/-standalone-.*//; s/.*-//' <<<"$DIR_NAME")
+            MEMORY=$(sed -E 's/.*-standalone-//' <<<"$DIR_NAME")
+            WINZIP=$(find nanvix-windows -name "nanvix-windows-*${PLATFORM}-standalone*${MEMORY}*.zip" | head -1)
             if [ -z "$WINZIP" ]; then
-              echo "::warning::No matching nanvix-windows zip for $SUFFIX; skipping"
+              echo "::warning::No matching nanvix-windows zip for ${PLATFORM}-${MEMORY}; skipping"
               echo "::endgroup::"
               continue
             fi
