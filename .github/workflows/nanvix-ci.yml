@@ -1161,25 +1161,34 @@ jobs:
           for result in \
             "${{ needs.resolve-zutil-version.result }}" \
             "${{ needs.get-nanvix-info.result }}" \
-            "${{ needs.build.result }}" \
-            "${{ needs.release.result }}" \
-            "${{ needs.update-nanvix-version.result }}"
+            "${{ needs.build.result }}"
           do
-            if [[ "$result" == "failure" || "$result" == "cancelled" ]]; then
-              echo "Upstream job failed or was cancelled: $result"
+            if [[ "$result" != "success" ]]; then
+              echo "Required upstream job did not succeed: $result"
               exit 1
             fi
           done
-          # windows-test is opt-in — only fail if it ran and failed.
-          WIN_RESULT="${{ needs.windows-test.result }}"
-          if [[ "$WIN_RESULT" == "failure" ]]; then
-            echo "windows-test failed"
+          # release and update-nanvix-version are event-gated: skipped is acceptable, anything else is not.
+          RELEASE_RESULT="${{ needs.release.result }}"
+          if [[ "$RELEASE_RESULT" != "success" && "$RELEASE_RESULT" != "skipped" ]]; then
+            echo "release did not succeed: $RELEASE_RESULT"
             exit 1
           fi
-          # benchmark is opt-in — only fail if it ran and failed.
+          UPDATE_RESULT="${{ needs.update-nanvix-version.result }}"
+          if [[ "$UPDATE_RESULT" != "success" && "$UPDATE_RESULT" != "skipped" ]]; then
+            echo "update-nanvix-version did not succeed: $UPDATE_RESULT"
+            exit 1
+          fi
+          # windows-test is opt-in: skipped is acceptable, anything else is not.
+          WIN_RESULT="${{ needs.windows-test.result }}"
+          if [[ "$WIN_RESULT" != "success" && "$WIN_RESULT" != "skipped" ]]; then
+            echo "windows-test did not succeed: $WIN_RESULT"
+            exit 1
+          fi
+          # benchmark is opt-in: skipped is acceptable, anything else is not.
           BENCH_RESULT="${{ needs.benchmark.result }}"
-          if [[ "$BENCH_RESULT" == "failure" ]]; then
-            echo "benchmark failed"
+          if [[ "$BENCH_RESULT" != "success" && "$BENCH_RESULT" != "skipped" ]]; then
+            echo "benchmark did not succeed: $BENCH_RESULT"
             exit 1
           fi
 
