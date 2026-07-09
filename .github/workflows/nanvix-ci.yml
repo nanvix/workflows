@@ -1036,7 +1036,7 @@ jobs:
           if (( ${#patterns[@]} == 0 )); then
             echo "::error::Empty patterns; refusing to download"
             echo "PLATFORMS_JSON=$PLATFORMS_JSON"
-            echo "MEM_SIZES=$MEM_SIZES_JSON"
+            echo "MEM_SIZES_JSON=$MEM_SIZES_JSON"
             exit 1
           fi
 
@@ -1055,7 +1055,7 @@ jobs:
           ls -la nanvix-windows/
 
           # resolve (platform, memsize) tuples to (linux_tar, windows_zip) pairs.
-          # nullglob drops non-matching globs; empty JOBS => nothing to do.
+          # nullglob drops non-matching globs; empty JOBS => fail (see check below).
           JOBS=()
           for PLATFORM in "${PLATFORMS[@]}"; do
             for MEMORY in "${MEM_SIZES[@]}"; do
