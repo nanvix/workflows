@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "tiers": [
+    {"tier": 1, "cron": "0 9 * * *"},
+    {"tier": 2, "cron": "0 10 * * *"},
+    {"tier": 3, "cron": "0 11 * * *"},
+    {"tier": 4, "cron": "0 12 * * *"},
+    {"tier": 5, "cron": "0 13 * * *"},
+    {"tier": 6, "cron": "0 14 * * *"}
+  ],
+  "consumers": [
+    {
+      "repo": "nanvix/busybox",
+      "tier": 1,
+      "update_nanvix": false,
+      "update_zutils": false,
+      "toolchain": "nanvix-sdk",
+      "provider": "c-clang",
+      "derived_image": false
+    },
+    {
+      "repo": "nanvix/zlib",
+      "tier": 1,
+      "update_nanvix": true,
+      "update_zutils": true,
+      "toolchain": "nanvix-sdk",
+      "provider": "c-clang",
+      "derived_image": false
+    },
+    {
+      "repo": "nanvix/bzip2",
+      "tier": 1,
+      "update_nanvix": true,
+      "update_zutils": true,
+      "toolchain": "nanvix-sdk",
+      "provider": "c-clang",
+      "derived_image": false
+    },
+    {
+      "repo": "nanvix/openssl",
+      "tier": 1,
+      "update_nanvix": true,
+      "update_zutils": true,
+      "toolchain": "nanvix-sdk",
+      "provider": "c-clang",
+      "derived_image": false
+    },
+    {
+      "repo": "nanvix/quickjs",
+      "tier": 1,
+      "update_nanvix": true,
+      "update_zutils": true,
+      "toolchain": "nanvix-sdk",
+      "provider": "c-clang",
+      "derived_image": false
+    },
+    {
+      "repo": "nanvix/libffi",
+      "tier": 1,
+      "update_nanvix": true,
+      "update_zutils": true,
+      "toolchain": "nanvix-sdk",
+      "provider": "c-clang",
+      "derived_image": false
+    },
+    {
+      "repo": "nanvix/posix-tests",
+      "tier": 1,
+      "update_nanvix": true,
+      "update_zutils": true,
+      "toolchain": "nanvix-sdk",
+      "provider": "c-clang",
+      "derived_image": false
+    },
+    {
+      "repo": "nanvix/xz",
+      "tier": 1,
+      "update_nanvix": true,
+      "update_zutils": true,
+      "toolchain": "nanvix-sdk",
+      "provider": "c-clang",
+      "derived_image": false
+    },
+    {
+      "repo": "nanvix/libxml2",
+      "tier": 2,
+      "update_nanvix": true,
+      "update_zutils": true,
+      "toolchain": "nanvix-sdk",
+      "provider": "c-clang",
+      "derived_image": false
+    },
+    {
+      "repo": "nanvix/sqlite",
+      "tier": 2,
+      "update_nanvix": true,
+      "update_zutils": true,
+      "toolchain": "nanvix-sdk",
+      "provider": "c-clang",
+      "derived_image": false
+    },
+    {
+      "repo": "nanvix/libxslt",
+      "tier": 3,
+      "update_nanvix": true,
+      "update_zutils": true,
+      "toolchain": "nanvix-sdk",
+      "provider": "c-clang",
+      "derived_image": false
+    },
+    {
+      "repo": "nanvix/lxml",
+      "tier": 4,
+      "update_nanvix": true,
+      "update_zutils": true,
+      "toolchain": "nanvix-sdk",
+      "provider": "c-clang",
+      "derived_image": false
+    },
+    {
+      "repo": "nanvix/cpython",
+      "tier": 5,
+      "update_nanvix": true,
+      "update_zutils": true,
+      "toolchain": "nanvix-sdk",
+      "provider": "c-clang",
+      "derived_image": false
+    },
+    {
+      "repo": "nanvix/nanvix-python",
+      "tier": 6,
+      "update_nanvix": true,
+      "update_zutils": true,
+      "toolchain": "nanvix-sdk",
+      "provider": "c-clang",
+      "derived_image": false
+    }
+  ]
+}

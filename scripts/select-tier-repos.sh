@@ -2,15 +2,13 @@
 # Copyright(c) The Maintainers of Nanvix.
 # Licensed under the MIT License.
 
-# Selects the tier-appropriate subset of target repositories based on
-# the GitHub Actions event context.  Reads tier definitions from
-# tier-config.json in the repository root so that the cron-to-repo
-# mapping lives in a single place shared by all dispatch workflows.
+# Selects enabled consumers for an updater and event from the canonical
+# registry.
 #
 # Required environment variables:
 #   EVENT_NAME     – github.event_name
 #   EVENT_SCHEDULE – github.event.schedule (empty for non-schedule events)
-#   DEFAULT_REPOS  – JSON array of all consumer repos (fallback)
+#   UPDATER        – "nanvix" or "zutils"
 #
 # Outputs (written to $GITHUB_OUTPUT):
 #   tier  – tier label (e.g. "tier1") or "all"
@@ -19,66 +17,51 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONFIG="${REPO_ROOT}/tier-config.json"
+CONFIG="${REGISTRY:-${REPO_ROOT}/consumer-registry.json}"
 
 if [ ! -f "$CONFIG" ]; then
-  echo "::error::Tier config not found: $CONFIG"
-  exit 1
+    echo "::error::Tier config not found: $CONFIG"
+    exit 1
 fi
 
 if ! command -v jq &>/dev/null; then
-  echo "::error::jq is required but not installed"
-  exit 1
-fi
-
-# --- Config validation ------------------------------------------------
-
-# No duplicate cron entries.
-DUPLICATE_CRONS=$(jq '[.tiers[].cron] | group_by(.) | map(select(length > 1)) | length' "$CONFIG")
-if [ "$DUPLICATE_CRONS" -ne 0 ]; then
-  echo "::error::Duplicate cron entries in $CONFIG"
-  exit 1
-fi
-
-# No duplicate tier names.
-DUPLICATE_NAMES=$(jq '[.tiers[].name] | group_by(.) | map(select(length > 1)) | length' "$CONFIG")
-if [ "$DUPLICATE_NAMES" -ne 0 ]; then
-  echo "::error::Duplicate tier names in $CONFIG"
-  exit 1
-fi
-
-# Union of tier repos must match consumer-repos.json.
-CONSUMER_REPOS="${REPO_ROOT}/consumer-repos.json"
-if [ -f "$CONSUMER_REPOS" ]; then
-  TIER_REPOS=$(jq -c '[.tiers[].repos[]] | sort | unique' "$CONFIG")
-  ALL_REPOS=$(jq -c 'sort | unique' "$CONSUMER_REPOS")
-  if [ "$TIER_REPOS" != "$ALL_REPOS" ]; then
-    echo "::error::Tier repos in $CONFIG do not match $CONSUMER_REPOS"
-    echo "  Tier repos:     $TIER_REPOS"
-    echo "  Consumer repos: $ALL_REPOS"
+    echo "::error::jq is required but not installed"
     exit 1
-  fi
 fi
+
+"${REPO_ROOT}/scripts/validate-consumer-registry.sh" "$CONFIG" >/dev/null
+
+case "${UPDATER:-}" in
+    nanvix) ENABLE_KEY="update_nanvix" ;;
+    zutils) ENABLE_KEY="update_zutils" ;;
+    *)
+        echo "::error::UPDATER must be 'nanvix' or 'zutils'"
+        exit 1
+        ;;
+esac
 
 # --- Tier selection ---------------------------------------------------
 
 if [ "$EVENT_NAME" = "schedule" ] && [ -n "${EVENT_SCHEDULE:-}" ]; then
-  TIER=$(jq -r --arg cron "$EVENT_SCHEDULE" \
-    '.tiers[] | select(.cron == $cron) | .name' "$CONFIG")
+    TIER_NUMBER=$(jq -r --arg cron "$EVENT_SCHEDULE" \
+        '.tiers[] | select(.cron == $cron) | .tier' "$CONFIG")
 
-  if [ -z "$TIER" ]; then
-    echo "::error::Unrecognized schedule '${EVENT_SCHEDULE}'; no matching tier in $CONFIG"
-    exit 1
-  fi
+    if [ -z "$TIER_NUMBER" ]; then
+        echo "::error::Unrecognized schedule '${EVENT_SCHEDULE}'; no matching tier in $CONFIG"
+        exit 1
+    fi
 
-  REPOS=$(jq -c --arg cron "$EVENT_SCHEDULE" \
-    '.tiers[] | select(.cron == $cron) | .repos' "$CONFIG")
+    TIER="tier${TIER_NUMBER}"
+    REPOS=$(jq -c --argjson tier "$TIER_NUMBER" --arg key "$ENABLE_KEY" \
+        '[.consumers[] | select(.tier == $tier and .[$key]) | .repo] | sort' "$CONFIG")
 
-  echo "tier=$TIER"  >> "$GITHUB_OUTPUT"
-  echo "repos=$REPOS" >> "$GITHUB_OUTPUT"
-  echo "Selected tier: $TIER (cron: $EVENT_SCHEDULE)"
+    echo "tier=$TIER" >>"$GITHUB_OUTPUT"
+    echo "repos=$REPOS" >>"$GITHUB_OUTPUT"
+    echo "Selected tier: $TIER (cron: $EVENT_SCHEDULE)"
 else
-  echo "tier=all"              >> "$GITHUB_OUTPUT"
-  echo "repos=$DEFAULT_REPOS"  >> "$GITHUB_OUTPUT"
-  echo "Selected tier: all (event: $EVENT_NAME)"
+    REPOS=$(jq -c --arg key "$ENABLE_KEY" \
+        '[.consumers[] | select(.[$key]) | .repo] | sort' "$CONFIG")
+    echo "tier=all" >>"$GITHUB_OUTPUT"
+    echo "repos=$REPOS" >>"$GITHUB_OUTPUT"
+    echo "Selected tier: all (event: $EVENT_NAME)"
 fi

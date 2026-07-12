@@ -169,8 +169,11 @@ on:
         default: ".github/workflows/nanvix-ci.yml"
       docker-image:
         description: >
-          Docker image used for cross-compilation.
-        required: true
+          Transitional Docker image override. SDK manifests and lockfiles are
+          authoritative; when supplied for an SDK consumer this must exactly
+          match the immutable effective build image.
+        required: false
+        default: ""
         type: string
       dist-path:
         description: >
@@ -204,15 +207,13 @@ on:
     secrets:
       GH_TOKEN:
         description: >
-          Token with repo read access (for zutil install and artifact downloads)
-          and contents + pull-requests write (for the update-nanvix-version job).
+          Token with repo read access for zutil and artifact downloads and
+          write access when publishing releases or failure issues.
         required: false
       DISPATCH_TOKEN:
         description: >
           Token with repo scope and admin access on consumer repos.
-          Used for downstream dispatches, version update PRs, and
-          auto-merging automation PRs (requires admin to bypass
-          branch protection).
+          Used for downstream dispatches and guarded automation PR auto-merge.
         required: true
     outputs:
       package_name:
@@ -230,6 +231,12 @@ on:
       nanvix_sha:
         description: Nanvix commit SHA.
         value: ${{ jobs.get-nanvix-info.outputs.nanvix_sha }}
+      sdk_version:
+        description: Verified SDK release version, empty for legacy consumers.
+        value: ${{ jobs.get-nanvix-info.outputs.sdk_version }}
+      sdk_image_ref:
+        description: Immutable SDK provider image reference.
+        value: ${{ jobs.get-nanvix-info.outputs.sdk_image_ref }}
       release_tag:
         description: Tag for the release created in this job, if applicable.
         value: ${{ jobs.release.outputs.release_tag }}
@@ -371,6 +378,18 @@ jobs:
       nanvix_version: ${{ steps.resolve.outputs.nanvix_version }}
       package_name: ${{ steps.resolve.outputs.package_name }}
       package_version: ${{ steps.resolve.outputs.package_version }}
+      build_image_ref: ${{ steps.image.outputs.build_image_ref }}
+      sdk_c_abi: ${{ steps.resolve.outputs.sdk_c_abi }}
+      sdk_digest: ${{ steps.resolve.outputs.sdk_digest }}
+      sdk_image: ${{ steps.resolve.outputs.sdk_image }}
+      sdk_image_ref: ${{ steps.resolve.outputs.sdk_image_ref }}
+      sdk_libc_commit: ${{ steps.resolve.outputs.sdk_libc_commit }}
+      sdk_libc_tag: ${{ steps.resolve.outputs.sdk_libc_tag }}
+      sdk_mode: ${{ steps.image.outputs.sdk_mode }}
+      sdk_provider: ${{ steps.resolve.outputs.sdk_provider }}
+      sdk_provider_id: ${{ steps.resolve.outputs.sdk_provider_id }}
+      sdk_sysroot_sha256: ${{ steps.resolve.outputs.sdk_sysroot_sha256 }}
+      sdk_version: ${{ steps.resolve.outputs.sdk_version }}
     steps:
       - uses: actions/checkout@v7
 
@@ -388,6 +407,94 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
         run: nanvix-zutil resolve >> "$GITHUB_OUTPUT"
+
+      - name: Resolve authoritative build image
+        id: image
+        env:
+          CALLER_IMAGE: ${{ inputs.docker-image }}
+          SDK_IMAGE_REF: ${{ steps.resolve.outputs.sdk_image_ref }}
+        run: |
+          set -euo pipefail
+          if [ -n "$SDK_IMAGE_REF" ]; then
+            BUILD_IMAGE_REF=$(python3 - <<'PY'
+          import tomllib
+
+          with open(".nanvix/nanvix.toml", "rb") as manifest_file:
+              toolchain = tomllib.load(manifest_file).get("toolchain", {})
+          image = toolchain.get("build-image", toolchain.get("sdk-image"))
+          digest = toolchain.get("build-digest", toolchain.get("sdk-digest"))
+          if not isinstance(image, str) or not isinstance(digest, str):
+              raise SystemExit("SDK manifest has no complete effective build image")
+          print(f"{image}@{digest}")
+          PY
+            )
+            if [ -n "$CALLER_IMAGE" ] && [ "$CALLER_IMAGE" != "$BUILD_IMAGE_REF" ]; then
+              echo "::error::docker-image disagrees with the SDK manifest: $CALLER_IMAGE"
+              exit 1
+            fi
+            echo "sdk_mode=true" >> "$GITHUB_OUTPUT"
+          else
+            if [ -z "$CALLER_IMAGE" ]; then
+              echo "::error::Legacy manifests still require the docker-image input"
+              exit 1
+            fi
+            BUILD_IMAGE_REF="$CALLER_IMAGE"
+            echo "sdk_mode=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "build_image_ref=$BUILD_IMAGE_REF" >> "$GITHUB_OUTPUT"
+
+      - name: Verify derived SDK build image
+        if: >-
+          steps.image.outputs.sdk_mode == 'true' &&
+          steps.image.outputs.build_image_ref != steps.resolve.outputs.sdk_image_ref
+        env:
+          BUILD_IMAGE_REF: ${{ steps.image.outputs.build_image_ref }}
+          SDK_DIGEST: ${{ steps.resolve.outputs.sdk_digest }}
+          SDK_IMAGE_REF: ${{ steps.resolve.outputs.sdk_image_ref }}
+        run: |
+          set -euo pipefail
+          docker pull "$BUILD_IMAGE_REF"
+          mkdir -p "$RUNNER_TEMP/sdk-verification"
+          docker run --rm "$SDK_IMAGE_REF" \
+            cat /opt/nanvix/nanvix-sdk.json \
+            > "$RUNNER_TEMP/sdk-verification/base-manifest.json"
+          docker run --rm "$BUILD_IMAGE_REF" \
+            cat /opt/nanvix/nanvix-sdk.json \
+            > "$RUNNER_TEMP/sdk-verification/build-manifest.json"
+          jq -S . "$RUNNER_TEMP/sdk-verification/base-manifest.json" \
+            > "$RUNNER_TEMP/sdk-verification/base-manifest.canonical.json"
+          jq -S . "$RUNNER_TEMP/sdk-verification/build-manifest.json" \
+            > "$RUNNER_TEMP/sdk-verification/build-manifest.canonical.json"
+          cmp \
+            "$RUNNER_TEMP/sdk-verification/base-manifest.canonical.json" \
+            "$RUNNER_TEMP/sdk-verification/build-manifest.canonical.json"
+          docker image inspect "$SDK_IMAGE_REF" --format '{{json .Config.Labels}}' \
+            > "$RUNNER_TEMP/sdk-verification/base-labels.json"
+          docker image inspect "$BUILD_IMAGE_REF" --format '{{json .Config.Labels}}' \
+            > "$RUNNER_TEMP/sdk-verification/build-labels.json"
+          python3 - "$RUNNER_TEMP/sdk-verification" "$SDK_DIGEST" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          directory = pathlib.Path(sys.argv[1])
+          sdk_digest = sys.argv[2]
+          base = json.loads((directory / "base-labels.json").read_text())
+          build = json.loads((directory / "build-labels.json").read_text())
+          prefix = "dev.nanvix.sdk."
+          for key, value in base.items():
+              if key.startswith(prefix) and build.get(key) != value:
+                  raise SystemExit(f"derived image did not preserve SDK label {key}")
+          allowed_extra = f"{prefix}base.digest"
+          extras = {
+              key for key in build
+              if key.startswith(prefix) and key not in base and key != allowed_extra
+          }
+          if extras:
+              raise SystemExit(f"derived image has unknown SDK labels: {sorted(extras)}")
+          if build.get(allowed_extra) != sdk_digest:
+              raise SystemExit("derived image does not prove its base SDK digest")
+          PY
 
   # -------------------------------------------------------------------
   #  Matrix build — platform × process-mode × memory
@@ -413,7 +520,15 @@ jobs:
       NANVIX_DEPLOYMENT_MODE: ${{ matrix.process-mode }}
       NANVIX_MEMORY_SIZE: ${{ matrix.memory }}
       NANVIX_VERSION: ${{ needs.get-nanvix-info.outputs.nanvix_tag }}
-      NANVIX_DOCKER_IMAGE: ${{ inputs.docker-image }}
+      NANVIX_DOCKER_IMAGE: ${{ needs.get-nanvix-info.outputs.build_image_ref }}
+      NANVIX_SDK_C_ABI: ${{ needs.get-nanvix-info.outputs.sdk_c_abi }}
+      NANVIX_SDK_DIGEST: ${{ needs.get-nanvix-info.outputs.sdk_digest }}
+      NANVIX_SDK_IMAGE_REF: ${{ needs.get-nanvix-info.outputs.sdk_image_ref }}
+      NANVIX_SDK_LIBC_COMMIT: ${{ needs.get-nanvix-info.outputs.sdk_libc_commit }}
+      NANVIX_SDK_LIBC_TAG: ${{ needs.get-nanvix-info.outputs.sdk_libc_tag }}
+      NANVIX_SDK_PROVIDER: ${{ needs.get-nanvix-info.outputs.sdk_provider }}
+      NANVIX_SDK_SYSROOT_SHA256: ${{ needs.get-nanvix-info.outputs.sdk_sysroot_sha256 }}
+      NANVIX_SDK_VERSION: ${{ needs.get-nanvix-info.outputs.sdk_version }}
     steps:
       - uses: actions/checkout@v7
 
@@ -435,7 +550,7 @@ jobs:
           python3 -m pip install --break-system-packages "$WHEEL_URL"
 
       - name: Log in to GHCR
-        if: startsWith(inputs.docker-image, 'ghcr.io/')
+        if: startsWith(needs.get-nanvix-info.outputs.build_image_ref, 'ghcr.io/')
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -443,8 +558,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pull Docker image
-        env:
-          NANVIX_DOCKER_IMAGE: ${{ inputs.docker-image }}
         run: |
           set -euo pipefail
           for attempt in 1 2 3 4 5; do
@@ -460,7 +573,7 @@ jobs:
       - name: Setup (with Docker)
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
-        run: nanvix-zutil setup --with-docker ${{ inputs.docker-image }}
+        run: nanvix-zutil setup --with-docker "$NANVIX_DOCKER_IMAGE"
 
       - name: Build (in Docker)
         run: nanvix-zutil build
@@ -568,7 +681,15 @@ jobs:
       NANVIX_DEPLOYMENT_MODE: standalone
       NANVIX_MEMORY_SIZE: ${{ matrix.memory }}
       NANVIX_VERSION: ${{ needs.get-nanvix-info.outputs.nanvix_tag }}
-      NANVIX_DOCKER_IMAGE: ${{ inputs.docker-image }}
+      NANVIX_DOCKER_IMAGE: ${{ needs.get-nanvix-info.outputs.build_image_ref }}
+      NANVIX_SDK_C_ABI: ${{ needs.get-nanvix-info.outputs.sdk_c_abi }}
+      NANVIX_SDK_DIGEST: ${{ needs.get-nanvix-info.outputs.sdk_digest }}
+      NANVIX_SDK_IMAGE_REF: ${{ needs.get-nanvix-info.outputs.sdk_image_ref }}
+      NANVIX_SDK_LIBC_COMMIT: ${{ needs.get-nanvix-info.outputs.sdk_libc_commit }}
+      NANVIX_SDK_LIBC_TAG: ${{ needs.get-nanvix-info.outputs.sdk_libc_tag }}
+      NANVIX_SDK_PROVIDER: ${{ needs.get-nanvix-info.outputs.sdk_provider }}
+      NANVIX_SDK_SYSROOT_SHA256: ${{ needs.get-nanvix-info.outputs.sdk_sysroot_sha256 }}
+      NANVIX_SDK_VERSION: ${{ needs.get-nanvix-info.outputs.sdk_version }}
     steps:
       - uses: actions/checkout@v7
 
@@ -586,7 +707,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
         shell: pwsh
-        run: nanvix-zutil setup --with-docker ${{ inputs.docker-image }}
+        run: nanvix-zutil setup --with-docker $env:NANVIX_DOCKER_IMAGE
 
       - name: Download Linux build output
         if: ${{ !inputs.windows-build }}
@@ -603,7 +724,7 @@ jobs:
           docker info
 
       - name: Log in to GHCR
-        if: inputs.windows-build && startsWith(inputs.docker-image, 'ghcr.io/')
+        if: inputs.windows-build && startsWith(needs.get-nanvix-info.outputs.build_image_ref, 'ghcr.io/')
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -613,8 +734,6 @@ jobs:
       - name: Pull Docker image
         if: inputs.windows-build
         shell: pwsh
-        env:
-          NANVIX_DOCKER_IMAGE: ${{ inputs.docker-image }}
         run: |
           for ($attempt = 1; $attempt -le 5; $attempt++) {
             Write-Host "attempting docker pull (attempt $attempt/5)"
@@ -666,7 +785,15 @@ jobs:
       NANVIX_DEPLOYMENT_MODE: ${{ matrix.process-mode }}
       NANVIX_MEMORY_SIZE: ${{ matrix.memory }}
       NANVIX_VERSION: ${{ needs.get-nanvix-info.outputs.nanvix_tag }}
-      NANVIX_DOCKER_IMAGE: ${{ inputs.docker-image }}
+      NANVIX_DOCKER_IMAGE: ${{ needs.get-nanvix-info.outputs.build_image_ref }}
+      NANVIX_SDK_C_ABI: ${{ needs.get-nanvix-info.outputs.sdk_c_abi }}
+      NANVIX_SDK_DIGEST: ${{ needs.get-nanvix-info.outputs.sdk_digest }}
+      NANVIX_SDK_IMAGE_REF: ${{ needs.get-nanvix-info.outputs.sdk_image_ref }}
+      NANVIX_SDK_LIBC_COMMIT: ${{ needs.get-nanvix-info.outputs.sdk_libc_commit }}
+      NANVIX_SDK_LIBC_TAG: ${{ needs.get-nanvix-info.outputs.sdk_libc_tag }}
+      NANVIX_SDK_PROVIDER: ${{ needs.get-nanvix-info.outputs.sdk_provider }}
+      NANVIX_SDK_SYSROOT_SHA256: ${{ needs.get-nanvix-info.outputs.sdk_sysroot_sha256 }}
+      NANVIX_SDK_VERSION: ${{ needs.get-nanvix-info.outputs.sdk_version }}
     steps:
       - uses: actions/checkout@v7
 
@@ -679,10 +806,18 @@ jobs:
             --jq '.assets[] | select(.name | endswith(".whl")) | .browser_download_url')
           python3 -m pip install --break-system-packages "$WHEEL_URL"
 
+      - name: Log in to GHCR
+        if: startsWith(needs.get-nanvix-info.outputs.build_image_ref, 'ghcr.io/')
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Setup (with Docker)
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
-        run: nanvix-zutil setup --with-docker ${{ inputs.docker-image }}
+        run: nanvix-zutil setup --with-docker "$NANVIX_DOCKER_IMAGE"
 
       - name: Benchmark
         env:
@@ -738,7 +873,6 @@ jobs:
         build,
         benchmark,
         release,
-        update-nanvix-version,
         windows-test,
       ]
     # Only report true failures (not cancellations from higher-priority runs).
@@ -748,8 +882,7 @@ jobs:
       inputs.caller-event-name != 'pull_request' &&
       (needs.build.result == 'failure'
        || needs.benchmark.result == 'failure'
-       || needs.release.result == 'failure'
-       || needs.update-nanvix-version.result == 'failure')
+       || needs.release.result == 'failure')
     runs-on: ubuntu-latest
     steps:
       - name: Identify failed jobs
@@ -759,8 +892,7 @@ jobs:
           for pair in \
             "build:${{ needs.build.result }}" \
             "benchmark:${{ needs.benchmark.result }}" \
-            "release:${{ needs.release.result }}" \
-            "update-nanvix-version:${{ needs.update-nanvix-version.result }}"
+            "release:${{ needs.release.result }}"
           do
             JOB="${pair%%:*}"
             RESULT="${pair#*:}"
@@ -831,11 +963,16 @@ jobs:
             if [[ -n "$TEAM_SLUG" ]]; then
               printf -v TEAM_CC '\n\ncc @%s/%s' "$ORG" "$TEAM_SLUG"
             fi
-            printf -v COMMENT_BODY '🔴 **New CI failure recorded** (%s)\n\n- **Trigger:** %s\n- **Nanvix Version:** %s\n- **Failed Jobs:** %s\n- **Run:** [#${{ github.run_number }}](%s)%s' \
+            COMMENT_FORMAT='🔴 **New CI failure recorded** (%s)\n\n'
+            COMMENT_FORMAT+='- **Trigger:** %s\n- **Nanvix Version:** %s\n'
+            COMMENT_FORMAT+='- **Failed Jobs:** %s\n- **Run:** [#%s](%s)%s'
+            # shellcheck disable=SC2059
+            printf -v COMMENT_BODY "$COMMENT_FORMAT" \
               "$TIMESTAMP" \
               "$EVENT" \
               "$NANVIX_VER" \
               "$FAILED_JOBS" \
+              "${{ github.run_number }}" \
               "$RUN_URL" \
               "$TEAM_CC"
             gh issue comment "$ISSUE_NUM" \
@@ -888,17 +1025,29 @@ jobs:
       PACKAGE_NAME: ${{ needs.get-nanvix-info.outputs.package_name }}
       PACKAGE_VERSION: ${{ needs.get-nanvix-info.outputs.package_version }}
       NANVIX_VERSION: ${{needs.get-nanvix-info.outputs.nanvix_version }}
+      SDK_C_ABI: ${{ needs.get-nanvix-info.outputs.sdk_c_abi }}
+      SDK_DIGEST: ${{ needs.get-nanvix-info.outputs.sdk_digest }}
+      SDK_IMAGE_REF: ${{ needs.get-nanvix-info.outputs.sdk_image_ref }}
+      SDK_LIBC_COMMIT: ${{ needs.get-nanvix-info.outputs.sdk_libc_commit }}
+      SDK_MODE: ${{ needs.get-nanvix-info.outputs.sdk_mode }}
+      SDK_PROVIDER_ID: ${{ needs.get-nanvix-info.outputs.sdk_provider_id }}
+      SDK_SYSROOT_SHA256: ${{ needs.get-nanvix-info.outputs.sdk_sysroot_sha256 }}
+      SDK_VERSION: ${{ needs.get-nanvix-info.outputs.sdk_version }}
     steps:
       - uses: actions/checkout@v7
 
       - name: Compute release tag
         id: tag
         run: |
-          if [[ '${{ inputs.use-release-sha }}' == 'true' ]]; then
-            SHORT_SHA="${GITHUB_SHA::7}"
-            RELEASE_TAG="${PACKAGE_VERSION}-nanvix-${NANVIX_VERSION}-${SHORT_SHA}"
+          if [[ "$SDK_MODE" == "true" ]]; then
+            SDK_REVISION="${SDK_VERSION##*-sdk.}"
+            RELEASE_TAG="${PACKAGE_VERSION}-nanvix-${NANVIX_VERSION}-sdk.${SDK_REVISION}"
           else
             RELEASE_TAG="${PACKAGE_VERSION}-nanvix-${NANVIX_VERSION}"
+          fi
+          if [[ '${{ inputs.use-release-sha }}' == 'true' ]]; then
+            SHORT_SHA="${GITHUB_SHA::7}"
+            RELEASE_TAG="${RELEASE_TAG}-${SHORT_SHA}"
           fi
           echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "Release tag: $RELEASE_TAG"
@@ -922,6 +1071,34 @@ jobs:
           nanvix-zutil resolve > /dev/null
           nanvix-zutil lock --shallow
 
+      - name: Generate SDK provenance asset
+        if: env.SDK_MODE == 'true'
+        run: |
+          jq -nS \
+            --arg sdk_version "$SDK_VERSION" \
+            --arg provider_id "$SDK_PROVIDER_ID" \
+            --arg image_ref "$SDK_IMAGE_REF" \
+            --arg digest "$SDK_DIGEST" \
+            --arg c_abi "$SDK_C_ABI" \
+            --arg libc_commit "$SDK_LIBC_COMMIT" \
+            --arg sysroot_sha256 "$SDK_SYSROOT_SHA256" \
+            --arg source_commit "$GITHUB_SHA" \
+            --arg package_name "$PACKAGE_NAME" \
+            --arg package_version "$PACKAGE_VERSION" \
+            '{
+              schema_version: 1,
+              package_name: $package_name,
+              package_version: $package_version,
+              source_commit: $source_commit,
+              sdk_version: $sdk_version,
+              provider_id: $provider_id,
+              image_ref: $image_ref,
+              digest: $digest,
+              c_abi: $c_abi,
+              libc_commit: $libc_commit,
+              sysroot_sha256: $sysroot_sha256
+            }' > sdk-provenance.json
+
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
@@ -938,6 +1115,20 @@ jobs:
             "${{ needs.get-nanvix-info.outputs.nanvix_sha }}" \
             "https://github.com/nanvix/nanvix/commit/${{ needs.get-nanvix-info.outputs.nanvix_sha }}"
 
+          if [[ "$SDK_MODE" == "true" ]]; then
+            SDK_NOTES_FORMAT="%s\n\n**SDK:** \`%s\`\n**SDK image:** \`%s\`\n"
+            SDK_NOTES_FORMAT+="**C ABI:** \`%s\`\n**libc commit:** \`%s\`\n"
+            SDK_NOTES_FORMAT+="**sysroot SHA-256:** \`%s\`"
+            # shellcheck disable=SC2059
+            printf -v NOTES "$SDK_NOTES_FORMAT" \
+              "$NOTES" \
+              "$SDK_VERSION" \
+              "$SDK_IMAGE_REF" \
+              "$SDK_C_ABI" \
+              "$SDK_LIBC_COMMIT" \
+              "$SDK_SYSROOT_SHA256"
+          fi
+
           if [[ -n "${{ inputs.release-notes-extra }}" ]]; then
             printf -v NOTES '%s\n\n%s' "$NOTES" "${{ inputs.release-notes-extra }}"
           fi
@@ -948,10 +1139,22 @@ jobs:
             exit 1
           fi
           assets+=( .nanvix/nanvix.lock )
+          if [[ "$SDK_MODE" == "true" ]]; then
+            assets+=( sdk-provenance.json )
+          fi
 
-          # Idempotent: if the release already exists (e.g., rerun or scheduled
-          # trigger for the same commit), update it instead of failing.
           if gh release view "$RELEASE_TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            if [[ "$SDK_MODE" == "true" ]]; then
+              mkdir -p existing-release
+              if ! gh release download "$RELEASE_TAG" \
+                --repo "${{ github.repository }}" \
+                --pattern sdk-provenance.json \
+                --dir existing-release ||
+                ! cmp -s sdk-provenance.json existing-release/sdk-provenance.json; then
+                echo "::error::Refusing to clobber $RELEASE_TAG from a different SDK build"
+                exit 1
+              fi
+            fi
             gh release edit "$RELEASE_TAG" \
               --repo "${{ github.repository }}" \
               --title "Build ${GITHUB_SHA::7}" \
@@ -1007,6 +1210,11 @@ jobs:
       NANVIX_TAG: ${{ needs.get-nanvix-info.outputs.nanvix_tag }}
       PACKAGE_NAME: ${{ needs.get-nanvix-info.outputs.package_name }}
       PACKAGE_VERSION: ${{ needs.get-nanvix-info.outputs.package_version }}
+      NANVIX_SDK_C_ABI: ${{ needs.get-nanvix-info.outputs.sdk_c_abi }}
+      NANVIX_SDK_DIGEST: ${{ needs.get-nanvix-info.outputs.sdk_digest }}
+      NANVIX_SDK_IMAGE_REF: ${{ needs.get-nanvix-info.outputs.sdk_image_ref }}
+      NANVIX_SDK_LIBC_COMMIT: ${{ needs.get-nanvix-info.outputs.sdk_libc_commit }}
+      NANVIX_SDK_VERSION: ${{ needs.get-nanvix-info.outputs.sdk_version }}
     steps:
       - uses: actions/checkout@v7
 
@@ -1105,44 +1313,6 @@ jobs:
           done < upload-list.txt
 
   # -------------------------------------------------------------------
-  # Pin nanvix version in consumer repo
-  # -------------------------------------------------------------------
-  update-nanvix-version:
-    name: Update Nanvix Version
-    if: ${{ inputs.caller-event-name == 'schedule' || inputs.caller-event-name == 'repository_dispatch' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          token: ${{ secrets.DISPATCH_TOKEN || secrets.GH_TOKEN }}
-
-      - name: Checkout workflow scripts
-        uses: actions/checkout@v7
-        with:
-          repository: nanvix/workflows
-          path: .nanvix-workflows
-          sparse-checkout: scripts
-
-      - name: Resolve latest nanvix release tag
-        id: latest
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
-        run: .nanvix-workflows/scripts/resolve-nanvix-tag.sh
-
-      - name: Check current nanvix-version
-        id: current
-        run: .nanvix-workflows/scripts/check-nanvix-version.sh
-
-      - name: Update nanvix-version and open PR
-        if: ${{ steps.current.outputs.version != steps.latest.outputs.version }}
-        env:
-          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN || secrets.GH_TOKEN }}
-          LATEST_VERSION: ${{ steps.latest.outputs.version }}
-          LATEST_TAG: ${{ steps.latest.outputs.tag }}
-          REPO: ${{ github.repository }}
-        run: .nanvix-workflows/scripts/update-nanvix-version.sh
-
-  # -------------------------------------------------------------------
   # CI gate — single required status check for branch protection
   # -------------------------------------------------------------------
   ci-passed:
@@ -1153,7 +1323,6 @@ jobs:
         build,
         benchmark,
         release,
-        update-nanvix-version,
         windows-test,
       ]
     if: always()
@@ -1171,15 +1340,10 @@ jobs:
               exit 1
             fi
           done
-          # release and update-nanvix-version are event-gated: skipped is acceptable, anything else is not.
+          # Release is event-gated: skipped is acceptable, anything else is not.
           RELEASE_RESULT="${{ needs.release.result }}"
           if [[ "$RELEASE_RESULT" != "success" && "$RELEASE_RESULT" != "skipped" ]]; then
             echo "release did not succeed: $RELEASE_RESULT"
-            exit 1
-          fi
-          UPDATE_RESULT="${{ needs.update-nanvix-version.result }}"
-          if [[ "$UPDATE_RESULT" != "success" && "$UPDATE_RESULT" != "skipped" ]]; then
-            echo "update-nanvix-version did not succeed: $UPDATE_RESULT"
             exit 1
           fi
           # windows-test is opt-in: skipped is acceptable, anything else is not.

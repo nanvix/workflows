@@ -1,7 +1,7 @@
 # Copyright(c) The Maintainers of Nanvix.
 # Licensed under the MIT License.
 
-name: Update Zutils Version
+name: Update Nanvix SDK
 
 on:
   schedule:
@@ -13,71 +13,67 @@ on:
     - cron: "0 14 * * *"
   workflow_dispatch:
     inputs:
-      tag:
-        description: Target zutils GitHub Release tag.
+      sdk-tag:
+        description: Verified nanvix/sdk GitHub Release tag; latest when empty.
         required: false
         type: string
+      zutils-ref:
+        description: Command-capable nanvix/zutils ref.
+        required: false
+        default: v0.15.0
+        type: string
+  repository_dispatch:
+    types: [nanvix-sdk-released]
+
 permissions:
   contents: read
   actions: write
 
 concurrency:
-  group: update-zutils-${{ github.event.schedule || 'all' }}
+  group: update-nanvix-${{ github.event.schedule || 'all' }}
   cancel-in-progress: true
 
 jobs:
   prepare:
     runs-on: ubuntu-latest
     outputs:
+      contract: ${{ steps.sdk.outputs.contract }}
+      idempotency_key: ${{ steps.sdk.outputs.idempotency_key }}
       repos: ${{ steps.select.outputs.repos }}
-      tag: ${{ steps.release.outputs.tag }}
-      templates_digest: ${{ steps.release.outputs.templates_digest }}
-      wheel_digest: ${{ steps.release.outputs.wheel_digest }}
-      wheel_name: ${{ steps.release.outputs.wheel_name }}
+      sdk_version: ${{ steps.sdk.outputs.sdk_version }}
+      tier: ${{ steps.select.outputs.tier }}
+      zutils_ref: ${{ steps.zutils.outputs.ref }}
     steps:
       - uses: actions/checkout@v7
 
-      - name: Select registered consumers
+      - name: Validate registry and select consumers
         id: select
         env:
           EVENT_NAME: ${{ github.event_name }}
           EVENT_SCHEDULE: ${{ github.event.schedule || '' }}
-          UPDATER: zutils
+          UPDATER: nanvix
         run: scripts/select-tier-repos.sh
 
-      - name: Resolve verified zutils release
-        id: release
+      - name: Resolve verified SDK release contract
+        id: sdk
         env:
           GH_TOKEN: ${{ github.token }}
-          INPUT_TAG: ${{ inputs.tag || '' }}
+          SDK_DISPATCH_CONTRACT: ${{ toJSON(github.event.client_payload.contract) }}
+          SDK_IDEMPOTENCY_KEY: ${{ github.event.client_payload.idempotency_key || '' }}
+          SDK_TAG: ${{ inputs.sdk-tag || '' }}
         run: |
-          set -euo pipefail
-          tag="$INPUT_TAG"
-          if [ -z "$tag" ]; then
-            tag=$(gh api repos/nanvix/zutils/releases/latest --jq .tag_name)
+          if [ "$SDK_DISPATCH_CONTRACT" = "null" ]; then
+            SDK_DISPATCH_CONTRACT=""
           fi
-          release=$(gh api "repos/nanvix/zutils/releases/tags/$tag")
-          jq -e --arg tag "$tag" '
-            .tag_name == $tag and .draft == false and .prerelease == false
-          ' <<< "$release" >/dev/null
-          wheel_name=$(jq -er '
-            [.assets[] | select(.name | endswith(".whl"))]
-            | if length == 1 then .[0].name else error("expected one wheel") end
-          ' <<< "$release")
-          wheel_digest=$(jq -er --arg name "$wheel_name" '
-            .assets[] | select(.name == $name) | .digest
-            | select(test("^sha256:[0-9a-f]{64}$"))
-          ' <<< "$release")
-          templates_digest=$(jq -er '
-            .assets[] | select(.name == "templates.zip") | .digest
-            | select(test("^sha256:[0-9a-f]{64}$"))
-          ' <<< "$release")
-          {
-            echo "tag=$tag"
-            echo "wheel_name=$wheel_name"
-            echo "wheel_digest=$wheel_digest"
-            echo "templates_digest=$templates_digest"
-          } >> "$GITHUB_OUTPUT"
+          export SDK_DISPATCH_CONTRACT
+          scripts/resolve-sdk-contract.sh
+
+      - name: Select zutils implementation
+        id: zutils
+        env:
+          INPUT_REF: ${{ inputs.zutils-ref || '' }}
+          CONFIGURED_REF: ${{ vars.ZUTILS_UPDATE_VERSION || 'v0.15.0' }}
+        run: echo "ref=${INPUT_REF:-$CONFIGURED_REF}" >> "$GITHUB_OUTPUT"
 
   mutate:
     needs: prepare
@@ -93,35 +89,26 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install verified target release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.prepare.outputs.tag }}
-          TEMPLATES_DIGEST: ${{ needs.prepare.outputs.templates_digest }}
-          WHEEL_DIGEST: ${{ needs.prepare.outputs.wheel_digest }}
-          WHEEL_NAME: ${{ needs.prepare.outputs.wheel_name }}
-        run: |
-          set -euo pipefail
-          mkdir -p zutils-release zutils-templates
-          gh release download "$TAG" \
-            --repo nanvix/zutils \
-            --pattern "$WHEEL_NAME" \
-            --pattern templates.zip \
-            --dir zutils-release
-          echo "${WHEEL_DIGEST#sha256:}  zutils-release/$WHEEL_NAME" \
-            | sha256sum -c -
-          echo "${TEMPLATES_DIGEST#sha256:}  zutils-release/templates.zip" \
-            | sha256sum -c -
-          python3 -m pip install "zutils-release/$WHEEL_NAME"
-          unzip -q zutils-release/templates.zip -d zutils-templates
+      - name: Checkout target zutils implementation
+        uses: actions/checkout@v7
+        with:
+          repository: nanvix/zutils
+          ref: ${{ needs.prepare.outputs.zutils_ref }}
+          path: zutils-source
+          persist-credentials: false
+
+      - name: Install target zutils
+        run: python3 -m pip install ./zutils-source
 
       - name: Mutate read-only consumer clones
         id: mutate
         env:
+          CONTRACT_B64: ${{ needs.prepare.outputs.contract }}
           REPOS: ${{ needs.prepare.outputs.repos }}
-          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           set -euo pipefail
+          printf '%s' "$CONTRACT_B64" | base64 -d > sdk-release.json
+          docker pull "$(jq -r '.image.ref' sdk-release.json)"
           mkdir -p mutation publication
           digests='{}'
           bundle_digests='{}'
@@ -145,9 +132,8 @@ jobs:
             if (
               cd "$clone"
               GITHUB_OUTPUT="$output" \
-                UPDATE_KIND=zutils \
-                UPDATE_TARGET="$TAG" \
-                TEMPLATES_DIR="$GITHUB_WORKSPACE/zutils-templates" \
+                UPDATE_KIND=nanvix \
+                UPDATE_TARGET="$GITHUB_WORKSPACE/sdk-release.json" \
                 TARGET_REPO="$repo" \
                 ARTIFACT_DIR="$GITHUB_WORKSPACE/publication/$slug" \
                 "$GITHUB_WORKSPACE/scripts/create-update-artifact.sh"
@@ -192,9 +178,9 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
           {
-            echo "## Zutils consumer updates"
+            echo "## Nanvix SDK consumer updates"
             echo ""
-            echo "**Zutils:** \`$TAG\`"
+            echo "**SDK:** \`${{ needs.prepare.outputs.sdk_version }}\`"
             for category in updated current blocked; do
               echo ""
               echo "### ${category^}"
@@ -213,7 +199,7 @@ jobs:
         if: steps.mutate.outputs.publication_repos != '[]'
         uses: actions/upload-artifact@v7
         with:
-          name: zutils-updates-${{ github.run_id }}
+          name: nanvix-updates-${{ github.run_id }}
           path: publication
           if-no-files-found: error
           retention-days: 1
@@ -228,17 +214,18 @@ jobs:
     uses: ./.github/workflows/publish-update.yml
     with:
       app-id: ${{ vars.CONSUMER_UPDATE_APP_ID }}
-      artifact: zutils-updates-${{ github.run_id }}
+      artifact: nanvix-updates-${{ github.run_id }}
       artifact-path: ${{ fromJSON(needs.mutate.outputs.artifact_paths)[matrix.repository] }}
-      update-kind: zutils
+      update-kind: nanvix
       body: >-
-        Automated update to nanvix/zutils `${{ needs.prepare.outputs.tag }}`.
-        The target release implementation applied its own verified templates.
-      branch: automation/update-zutils-version
+        Automated coherent update to verified Nanvix SDK
+        `${{ needs.prepare.outputs.sdk_version }}`. The manifest and lockfile
+        were generated atomically by the target zutils implementation.
+      branch: automation/update-nanvix-version
       expected-bundle-sha256: ${{ fromJSON(needs.mutate.outputs.bundle_digests)[matrix.repository] }}
       expected-patch-sha256: ${{ fromJSON(needs.mutate.outputs.patch_digests)[matrix.repository] }}
       repository: ${{ matrix.repository }}
-      title: "[ci] E: Update zutils"
+      title: "[ci] E: Update Nanvix SDK"
     secrets:
       app-private-key: ${{ secrets.CONSUMER_UPDATE_APP_PRIVATE_KEY }}
       dispatch-token: ${{ secrets.DISPATCH_TOKEN }}
@@ -248,7 +235,8 @@ jobs:
     if: always() && needs.mutate.outputs.failed != '[]'
     runs-on: ubuntu-latest
     steps:
-      - env:
+      - name: Fail after publishing valid independent updates
+        env:
           FAILED: ${{ needs.mutate.outputs.failed }}
         run: |
           echo "::error::Consumer mutations failed: $FAILED"
