@@ -1,0 +1,108 @@
+# Copyright(c) The Maintainers of Nanvix.
+# Licensed under the MIT License.
+
+name: Publish Consumer Update
+
+on:
+  workflow_call:
+    inputs:
+      repository:
+        description: Consumer repository in owner/name form.
+        required: true
+        type: string
+      artifact:
+        description: Name of the mutation artifact.
+        required: true
+        type: string
+      artifact-path:
+        description: Repository-specific path inside the artifact.
+        required: true
+        type: string
+      update-kind:
+        description: Trusted publisher policy to apply (nanvix or zutils).
+        required: true
+        type: string
+      expected-patch-sha256:
+        description: SHA-256 transferred through the mutation job output.
+        required: true
+        type: string
+      expected-bundle-sha256:
+        description: SHA-256 binding the patch, metadata, and updater result.
+        required: true
+        type: string
+      branch:
+        description: Automation branch.
+        required: true
+        type: string
+      title:
+        description: Pull request title and commit message.
+        required: true
+        type: string
+      body:
+        description: Pull request body.
+        required: true
+        type: string
+      app-id:
+        description: GitHub App ID whose installation is scoped to consumers.
+        required: false
+        default: ""
+        type: string
+    secrets:
+      app-private-key:
+        description: GitHub App private key.
+        required: false
+      dispatch-token:
+        description: Transitional publisher token used when no App is configured.
+        required: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce trusted caller
+        if: github.repository != 'nanvix/workflows'
+        run: |
+          echo "::error::Consumer publication must run from nanvix/workflows"
+          exit 1
+
+      - name: Checkout trusted publisher
+        uses: actions/checkout@v7
+
+      - name: Download validated mutation artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.artifact }}
+          path: publication
+
+      - name: Resolve repository name
+        id: target
+        env:
+          REPOSITORY: ${{ inputs.repository }}
+        run: echo "name=${REPOSITORY#*/}" >> "$GITHUB_OUTPUT"
+
+      - name: Create repository-scoped token
+        if: inputs.app-id != ''
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ inputs.app-id }}
+          private-key: ${{ secrets.app-private-key }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ steps.target.outputs.name }}
+
+      - name: Publish patch without executing consumer code
+        env:
+          ARTIFACT_DIR: publication/${{ inputs.artifact-path }}
+          EXPECTED_BUNDLE_SHA256: ${{ inputs.expected-bundle-sha256 }}
+          EXPECTED_PATCH_SHA256: ${{ inputs.expected-patch-sha256 }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.dispatch-token }}
+          PR_BODY: ${{ inputs.body }}
+          PR_TITLE: ${{ inputs.title }}
+          TARGET_REPO: ${{ inputs.repository }}
+          UPDATE_KIND: ${{ inputs.update-kind }}
+          UPDATE_BRANCH: ${{ inputs.branch }}
+        run: scripts/publish-update.sh

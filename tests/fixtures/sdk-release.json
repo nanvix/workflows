@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "sdk_version": "v0.20.0-sdk.1",
+  "provider_id": "c-clang",
+  "provider": "clang",
+  "role": "c",
+  "image": {
+    "name": "ghcr.io/nanvix/nanvix-sdk-c-clang",
+    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "ref": "ghcr.io/nanvix/nanvix-sdk-c-clang@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "target": {
+    "triple": "i686-unknown-nanvix",
+    "alias": "i686-nanvix"
+  },
+  "toolchain": {
+    "llvm_version": "22.1.8",
+    "llvm_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "port_branch": "nanvix/v22.1.8"
+  },
+  "libc": {
+    "nanvix_tag": "v0.20.0",
+    "nanvix_version": "0.20.0",
+    "nanvix_commit": "cccccccccccccccccccccccccccccccccccccccc",
+    "sysroot_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  },
+  "compat": {
+    "c_abi": "i686-nanvix-sysv-1",
+    "cxx_abi": "libc++",
+    "abi": "static-elf",
+    "min_nanvix_os": "0.19.9"
+  },
+  "features": {
+    "localization": true,
+    "filesystem": true,
+    "wide_chars": true,
+    "compiler_rt": "builtins-only",
+    "dynamic_loader": false
+  }
+}

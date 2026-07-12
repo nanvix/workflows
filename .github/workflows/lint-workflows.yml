@@ -33,3 +33,28 @@ jobs:
 
       - name: Run actionlint
         run: actionlint -color
+
+  foundation:
+    name: Foundation tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install shfmt
+        run: |
+          SHFMT_VERSION="v3.13.0"
+          SHFMT_SHA256="70aa99784703a8d6569bbf0b1e43e1a91906a4166bf1a79de42050a6d0de7551"
+          curl -fsSL \
+            "https://github.com/mvdan/sh/releases/download/${SHFMT_VERSION}/shfmt_${SHFMT_VERSION}_linux_amd64" \
+            -o /tmp/shfmt
+          echo "${SHFMT_SHA256}  /tmp/shfmt" | sha256sum -c -
+          sudo install -m 755 /tmp/shfmt /usr/local/bin/shfmt
+
+      - name: Run foundation tests
+        run: tests/run-tests.sh
+
+      - name: Lint scripts
+        run: |
+          shellcheck scripts/*.sh tests/run-tests.sh
+          shfmt -d -i 4 -ci scripts/*.sh tests/run-tests.sh
+          python3 -m py_compile scripts/validate-update-patch.py

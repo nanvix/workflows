@@ -14,7 +14,7 @@ on:
     tags:
       - "v*"
   schedule:
-    # Tier-to-repo mapping lives in tier-config.json.
+    # Tier-to-repo mapping lives in consumer-registry.json.
     - cron: "0 9 * * *" # Tier 1
     - cron: "0 10 * * *" # Tier 2
     - cron: "0 11 * * *" # Tier 3
@@ -71,15 +71,12 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Resolved latest tag: $TAG"
 
-          REPOS=$(jq -c '.' consumer-repos.json)
-          echo "default_repos=$REPOS" >> "$GITHUB_OUTPUT"
-
       - name: Select target repos
         id: select-repos
         env:
-          DEFAULT_REPOS: ${{ steps.latest.outputs.default_repos }}
           EVENT_NAME: ${{ github.event_name }}
           EVENT_SCHEDULE: ${{ github.event.schedule || '' }}
+          UPDATER: zutils
         run: bash scripts/select-tier-repos.sh
 
       - name: Update target repositories
@@ -104,15 +101,23 @@ jobs:
             local REPO_DIR="$2"
 
             # Clone only the default branch (shallow).
-            gh repo clone "$REPO" "$REPO_DIR" -- --depth 1 2>&1
+            if ! gh repo clone "$REPO" "$REPO_DIR" -- --depth 1 2>&1; then
+              return 1
+            fi
 
-            pushd "$REPO_DIR" >/dev/null
+            if ! pushd "$REPO_DIR" >/dev/null; then
+              return 1
+            fi
 
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
 
             local DEFAULT_BRANCH
-            DEFAULT_BRANCH=$(gh repo view "$REPO" --json defaultBranchRef --jq '.defaultBranchRef.name')
+            if ! DEFAULT_BRANCH=$(gh repo view "$REPO" \
+              --json defaultBranchRef --jq '.defaultBranchRef.name'); then
+              popd >/dev/null
+              return 1
+            fi
             echo "Default branch: $DEFAULT_BRANCH"
 
             # Find and update all nanvix/workflows version references.
@@ -121,10 +126,18 @@ jobs:
             for FILE in .github/workflows/*.yml .github/workflows/*.yaml; do
               [ -f "$FILE" ] || continue
               if grep -qE 'uses:[[:space:]]*nanvix/workflows/.+@v[^[:space:]#]+' "$FILE"; then
-                sed -i -E "s|(uses:[[:space:]]*nanvix/workflows/.+)@v[^[:space:]#]+|\1@${LATEST_TAG}|g" "$FILE"
+                if ! sed -i -E \
+                  "s|(uses:[[:space:]]*nanvix/workflows/.+)@v[^[:space:]#]+|\1@${LATEST_TAG}|g" \
+                  "$FILE"; then
+                  popd >/dev/null
+                  return 1
+                fi
 
                 if ! git diff --quiet -- "$FILE"; then
-                  git add "$FILE"
+                  if ! git add "$FILE"; then
+                    popd >/dev/null
+                    return 1
+                  fi
                   CHANGED=1
                 fi
               fi
@@ -138,12 +151,27 @@ jobs:
             fi
 
             # Create or reset the automation branch and commit.
-            git checkout -B "$BRANCH"
-            git commit -m "$COMMIT_MSG"
+            if ! git checkout -B "$BRANCH" || ! git commit -m "$COMMIT_MSG"; then
+              popd >/dev/null
+              return 1
+            fi
 
             # Ensure git push uses DISPATCH_TOKEN credentials for this repo.
-            git remote set-url origin "https://x-access-token:${DISPATCH_TOKEN}@github.com/${REPO}.git"
-            git push origin "$BRANCH" --force 2>&1
+            if ! git remote set-url origin \
+              "https://x-access-token:${DISPATCH_TOKEN}@github.com/${REPO}.git"; then
+              popd >/dev/null
+              return 1
+            fi
+            if ! REMOTE_SHA=$(git ls-remote --heads origin \
+              "refs/heads/$BRANCH" | awk '{print $1}'); then
+              popd >/dev/null
+              return 1
+            fi
+            if ! git push origin "$BRANCH" \
+              "--force-with-lease=refs/heads/$BRANCH:$REMOTE_SHA" 2>&1; then
+              popd >/dev/null
+              return 1
+            fi
 
             # Open or refresh a PR.
             local PR_TITLE="[ci] E: Update nanvix workflow refs to ${LATEST_TAG}"
@@ -162,19 +190,25 @@ jobs:
 
             local NEW_PR=""
             if [ -n "$EXISTING_PR" ]; then
-              gh pr edit "$EXISTING_PR" \
-                --repo "$REPO" \
-                --title "$PR_TITLE" \
-                --body "$PR_BODY"
+              if ! gh api --method PATCH \
+                "repos/$REPO/pulls/$EXISTING_PR" \
+                -f title="$PR_TITLE" \
+                -f body="$PR_BODY" >/dev/null; then
+                popd >/dev/null
+                return 1
+              fi
               echo "Updated existing PR #$EXISTING_PR on $REPO."
             else
               local PR_URL
-              PR_URL=$(gh pr create \
+              if ! PR_URL=$(gh pr create \
                 --repo "$REPO" \
                 --title "$PR_TITLE" \
                 --body "$PR_BODY" \
                 --base "$DEFAULT_BRANCH" \
-                --head "$BRANCH")
+                --head "$BRANCH"); then
+                popd >/dev/null
+                return 1
+              fi
 
               NEW_PR="${PR_URL##*/}"
               echo "Opened PR #$NEW_PR on $REPO."
@@ -183,9 +217,12 @@ jobs:
             # Best-effort assignment.
             local LATEST_PR="${EXISTING_PR:-$NEW_PR}"
             if [ -n "${LATEST_PR:-}" ] && [ -n "$ASSIGNEE" ]; then
-              gh pr edit "$LATEST_PR" --repo "$REPO" \
-                --add-assignee "$ASSIGNEE" \
-                --add-reviewer "$ASSIGNEE" 2>/dev/null || true
+              gh api --method POST \
+                "repos/$REPO/issues/$LATEST_PR/assignees" \
+                -f "assignees[]=$ASSIGNEE" >/dev/null 2>&1 || true
+              gh api --method POST \
+                "repos/$REPO/pulls/$LATEST_PR/requested_reviewers" \
+                -f "reviewers[]=$ASSIGNEE" >/dev/null 2>&1 || true
             fi
 
             UPDATED_ITEMS+=("${REPO} — https://github.com/${REPO}/pull/${LATEST_PR}")
@@ -230,3 +267,7 @@ jobs:
               for R in "${FAILED_REPOS[@]}"; do echo "- $R"; done
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "${#FAILED_REPOS[@]}" -gt 0 ]; then
+            exit 1
+          fi
