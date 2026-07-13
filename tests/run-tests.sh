@@ -313,4 +313,10 @@ grep -q 'types: \[nanvix-sdk-released\]' \
     "$ROOT/.github/workflows/nanvix-update-nanvix.yml")" -eq 1 ]
 ok "schedule and SDK dispatch share one verified tuple resolver"
 
+grep -Fq "cp sdk-release.json \"\$clone/.git/sdk-release.json\"" \
+    "$ROOT/.github/workflows/nanvix-update-nanvix.yml"
+grep -Fq 'UPDATE_TARGET=.git/sdk-release.json' \
+    "$ROOT/.github/workflows/nanvix-update-nanvix.yml"
+ok "SDK contracts remain confined to each read-only consumer clone"
+
 echo "1..$PASS"
