@@ -126,6 +126,7 @@ jobs:
               echo "::endgroup::"
               continue
             fi
+            cp sdk-release.json "$clone/.git/sdk-release.json"
 
             output="$GITHUB_WORKSPACE/mutation/$slug.output"
             : > "$output"
@@ -133,7 +134,7 @@ jobs:
               cd "$clone"
               GITHUB_OUTPUT="$output" \
                 UPDATE_KIND=nanvix \
-                UPDATE_TARGET="$GITHUB_WORKSPACE/sdk-release.json" \
+                UPDATE_TARGET=.git/sdk-release.json \
                 TARGET_REPO="$repo" \
                 ARTIFACT_DIR="$GITHUB_WORKSPACE/publication/$slug" \
                 "$GITHUB_WORKSPACE/scripts/create-update-artifact.sh"
