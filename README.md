@@ -34,7 +34,8 @@ Blocked dependency resolution creates no publication artifact. Updated,
 current, blocked, and failed consumers appear separately in the run summary.
 Automation branches remain `automation/update-nanvix-version` and
 `automation/update-zutils-version`, preserving guarded auto-merge.
-BusyBox remains kill-switched until its Nanvix port becomes the default branch.
+BusyBox is enabled after canonicalizing its Nanvix port and making that port
+the repository default branch.
 
 The Nanvix updater accepts the `nanvix-sdk-released` dispatch contract from
 `nanvix/sdk`. It compares the payload with the authoritative GitHub Release
