@@ -11,9 +11,15 @@ TITLE="${PR_TITLE:?PR_TITLE is required}"
 BODY="${PR_BODY:?PR_BODY is required}"
 EXPECTED_DIGEST="${EXPECTED_PATCH_SHA256:?EXPECTED_PATCH_SHA256 is required}"
 EXPECTED_BUNDLE_DIGEST="${EXPECTED_BUNDLE_SHA256:?EXPECTED_BUNDLE_SHA256 is required}"
-ARTIFACT_DIR="${ARTIFACT_DIR:?ARTIFACT_DIR is required}"
+ARTIFACT_INPUT="${ARTIFACT_DIR:?ARTIFACT_DIR is required}"
 TOKEN="${GH_TOKEN:?GH_TOKEN is required}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if [ ! -d "$ARTIFACT_INPUT" ] || [ -L "$ARTIFACT_INPUT" ]; then
+    echo "error: publication artifact directory is missing or unsafe" >&2
+    exit 1
+fi
+ARTIFACT_DIR="$(cd "$ARTIFACT_INPUT" && pwd -P)"
 
 case "$KIND" in
     nanvix)
