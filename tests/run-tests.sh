@@ -327,4 +327,14 @@ grep -Fq "needs.release.outputs.release_published == 'true'" \
     "$ROOT/.github/workflows/nanvix-ci.yml"
 ok "existing SDK release tuples remain immutable and suppress redispatch"
 
+if grep -Fq 'docker-image:' "$ROOT/.github/workflows/nanvix-ci.yml"; then
+    echo "reusable workflow still exposes docker-image" >&2
+    exit 1
+fi
+grep -Fq "A canonical nanvix-sdk manifest and lockfile are required" \
+    "$ROOT/.github/workflows/nanvix-ci.yml"
+grep -Fq "nanvix-zutil lock --check" \
+    "$ROOT/.github/workflows/nanvix-ci.yml"
+ok "reusable CI requires canonical SDK provenance"
+
 echo "1..$PASS"

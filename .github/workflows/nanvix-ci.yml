@@ -167,14 +167,6 @@ on:
         required: false
         type: string
         default: ".github/workflows/nanvix-ci.yml"
-      docker-image:
-        description: >
-          Transitional Docker image override. SDK manifests and lockfiles are
-          authoritative; when supplied for an SDK consumer this must exactly
-          match the immutable effective build image.
-        required: false
-        default: ""
-        type: string
       dist-path:
         description: >
           Output path for distribution artifacts.
@@ -232,7 +224,7 @@ on:
         description: Nanvix commit SHA.
         value: ${{ jobs.get-nanvix-info.outputs.nanvix_sha }}
       sdk_version:
-        description: Verified SDK release version, empty for legacy consumers.
+        description: Verified SDK release version.
         value: ${{ jobs.get-nanvix-info.outputs.sdk_version }}
       sdk_image_ref:
         description: Immutable SDK provider image reference.
@@ -385,7 +377,6 @@ jobs:
       sdk_image_ref: ${{ steps.resolve.outputs.sdk_image_ref }}
       sdk_libc_commit: ${{ steps.resolve.outputs.sdk_libc_commit }}
       sdk_libc_tag: ${{ steps.resolve.outputs.sdk_libc_tag }}
-      sdk_mode: ${{ steps.image.outputs.sdk_mode }}
       sdk_provider: ${{ steps.resolve.outputs.sdk_provider }}
       sdk_provider_id: ${{ steps.resolve.outputs.sdk_provider_id }}
       sdk_sysroot_sha256: ${{ steps.resolve.outputs.sdk_sysroot_sha256 }}
@@ -406,17 +397,21 @@ jobs:
         id: resolve
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
-        run: nanvix-zutil resolve >> "$GITHUB_OUTPUT"
+        run: |
+          nanvix-zutil lock --check
+          nanvix-zutil resolve >> "$GITHUB_OUTPUT"
 
       - name: Resolve authoritative build image
         id: image
         env:
-          CALLER_IMAGE: ${{ inputs.docker-image }}
           SDK_IMAGE_REF: ${{ steps.resolve.outputs.sdk_image_ref }}
         run: |
           set -euo pipefail
-          if [ -n "$SDK_IMAGE_REF" ]; then
-            BUILD_IMAGE_REF=$(python3 - <<'PY'
+          if [ -z "$SDK_IMAGE_REF" ]; then
+            echo "::error::A canonical nanvix-sdk manifest and lockfile are required"
+            exit 1
+          fi
+          BUILD_IMAGE_REF=$(python3 - <<'PY'
           import tomllib
 
           with open(".nanvix/nanvix.toml", "rb") as manifest_file:
@@ -427,25 +422,11 @@ jobs:
               raise SystemExit("SDK manifest has no complete effective build image")
           print(f"{image}@{digest}")
           PY
-            )
-            if [ -n "$CALLER_IMAGE" ] && [ "$CALLER_IMAGE" != "$BUILD_IMAGE_REF" ]; then
-              echo "::error::docker-image disagrees with the SDK manifest: $CALLER_IMAGE"
-              exit 1
-            fi
-            echo "sdk_mode=true" >> "$GITHUB_OUTPUT"
-          else
-            if [ -z "$CALLER_IMAGE" ]; then
-              echo "::error::Legacy manifests still require the docker-image input"
-              exit 1
-            fi
-            BUILD_IMAGE_REF="$CALLER_IMAGE"
-            echo "sdk_mode=false" >> "$GITHUB_OUTPUT"
-          fi
+          )
           echo "build_image_ref=$BUILD_IMAGE_REF" >> "$GITHUB_OUTPUT"
 
       - name: Verify derived SDK build image
         if: >-
-          steps.image.outputs.sdk_mode == 'true' &&
           steps.image.outputs.build_image_ref != steps.resolve.outputs.sdk_image_ref
         env:
           BUILD_IMAGE_REF: ${{ steps.image.outputs.build_image_ref }}
@@ -1030,7 +1011,6 @@ jobs:
       SDK_DIGEST: ${{ needs.get-nanvix-info.outputs.sdk_digest }}
       SDK_IMAGE_REF: ${{ needs.get-nanvix-info.outputs.sdk_image_ref }}
       SDK_LIBC_COMMIT: ${{ needs.get-nanvix-info.outputs.sdk_libc_commit }}
-      SDK_MODE: ${{ needs.get-nanvix-info.outputs.sdk_mode }}
       SDK_PROVIDER_ID: ${{ needs.get-nanvix-info.outputs.sdk_provider_id }}
       SDK_SYSROOT_SHA256: ${{ needs.get-nanvix-info.outputs.sdk_sysroot_sha256 }}
       SDK_VERSION: ${{ needs.get-nanvix-info.outputs.sdk_version }}
@@ -1040,12 +1020,8 @@ jobs:
       - name: Compute release tag
         id: tag
         run: |
-          if [[ "$SDK_MODE" == "true" ]]; then
-            SDK_REVISION="${SDK_VERSION##*-sdk.}"
-            RELEASE_TAG="${PACKAGE_VERSION}-nanvix-${NANVIX_VERSION}-sdk.${SDK_REVISION}"
-          else
-            RELEASE_TAG="${PACKAGE_VERSION}-nanvix-${NANVIX_VERSION}"
-          fi
+          SDK_REVISION="${SDK_VERSION##*-sdk.}"
+          RELEASE_TAG="${PACKAGE_VERSION}-nanvix-${NANVIX_VERSION}-sdk.${SDK_REVISION}"
           if [[ '${{ inputs.use-release-sha }}' == 'true' ]]; then
             SHORT_SHA="${GITHUB_SHA::7}"
             RELEASE_TAG="${RELEASE_TAG}-${SHORT_SHA}"
@@ -1073,7 +1049,6 @@ jobs:
           nanvix-zutil lock --shallow
 
       - name: Generate SDK provenance asset
-        if: env.SDK_MODE == 'true'
         run: |
           jq -nS \
             --arg sdk_version "$SDK_VERSION" \
@@ -1117,19 +1092,17 @@ jobs:
             "${{ needs.get-nanvix-info.outputs.nanvix_sha }}" \
             "https://github.com/nanvix/nanvix/commit/${{ needs.get-nanvix-info.outputs.nanvix_sha }}"
 
-          if [[ "$SDK_MODE" == "true" ]]; then
-            SDK_NOTES_FORMAT="%s\n\n**SDK:** \`%s\`\n**SDK image:** \`%s\`\n"
-            SDK_NOTES_FORMAT+="**C ABI:** \`%s\`\n**libc commit:** \`%s\`\n"
-            SDK_NOTES_FORMAT+="**sysroot SHA-256:** \`%s\`"
-            # shellcheck disable=SC2059
-            printf -v NOTES "$SDK_NOTES_FORMAT" \
-              "$NOTES" \
-              "$SDK_VERSION" \
-              "$SDK_IMAGE_REF" \
-              "$SDK_C_ABI" \
-              "$SDK_LIBC_COMMIT" \
-              "$SDK_SYSROOT_SHA256"
-          fi
+          SDK_NOTES_FORMAT="%s\n\n**SDK:** \`%s\`\n**SDK image:** \`%s\`\n"
+          SDK_NOTES_FORMAT+="**C ABI:** \`%s\`\n**libc commit:** \`%s\`\n"
+          SDK_NOTES_FORMAT+="**sysroot SHA-256:** \`%s\`"
+          # shellcheck disable=SC2059
+          printf -v NOTES "$SDK_NOTES_FORMAT" \
+            "$NOTES" \
+            "$SDK_VERSION" \
+            "$SDK_IMAGE_REF" \
+            "$SDK_C_ABI" \
+            "$SDK_LIBC_COMMIT" \
+            "$SDK_SYSROOT_SHA256"
 
           if [[ -n "${{ inputs.release-notes-extra }}" ]]; then
             printf -v NOTES '%s\n\n%s' "$NOTES" "${{ inputs.release-notes-extra }}"
@@ -1141,41 +1114,28 @@ jobs:
             exit 1
           fi
           assets+=( .nanvix/nanvix.lock )
-          if [[ "$SDK_MODE" == "true" ]]; then
-            assets+=( sdk-provenance.json )
-          fi
+          assets+=( sdk-provenance.json )
 
           if gh release view "$RELEASE_TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            if [[ "$SDK_MODE" == "true" ]]; then
-              mkdir -p existing-release
-              if ! gh release download "$RELEASE_TAG" \
-                --repo "${{ github.repository }}" \
-                --pattern sdk-provenance.json \
-                --dir existing-release; then
-                echo "::error::Existing SDK release has no provenance asset"
-                exit 1
-              fi
-              jq -S 'del(.source_commit)' sdk-provenance.json \
-                > candidate-provenance.json
-              jq -S 'del(.source_commit)' existing-release/sdk-provenance.json \
-                > existing-provenance.json
-              if ! cmp -s candidate-provenance.json existing-provenance.json; then
-                echo "::error::Refusing to clobber $RELEASE_TAG from a different immutable SDK tuple"
-                exit 1
-              fi
-              echo "::notice::$RELEASE_TAG already exists; immutable assets were not replaced"
-              echo "release_published=false" >> "$GITHUB_OUTPUT"
-              exit 0
+            mkdir -p existing-release
+            if ! gh release download "$RELEASE_TAG" \
+              --repo "${{ github.repository }}" \
+              --pattern sdk-provenance.json \
+              --dir existing-release; then
+              echo "::error::Existing SDK release has no provenance asset"
+              exit 1
             fi
-            gh release edit "$RELEASE_TAG" \
-              --repo "${{ github.repository }}" \
-              --title "Build ${GITHUB_SHA::7}" \
-              --notes "$NOTES" \
-              --latest
-            gh release upload "$RELEASE_TAG" \
-              --repo "${{ github.repository }}" \
-              --clobber \
-              "${assets[@]}"
+            jq -S 'del(.source_commit)' sdk-provenance.json \
+              > candidate-provenance.json
+            jq -S 'del(.source_commit)' existing-release/sdk-provenance.json \
+              > existing-provenance.json
+            if ! cmp -s candidate-provenance.json existing-provenance.json; then
+              echo "::error::Refusing to clobber $RELEASE_TAG from a different immutable SDK tuple"
+              exit 1
+            fi
+            echo "::notice::$RELEASE_TAG already exists; immutable assets were not replaced"
+            echo "release_published=false" >> "$GITHUB_OUTPUT"
+            exit 0
           else
             gh release create "$RELEASE_TAG" \
               --repo "${{ github.repository }}" \
