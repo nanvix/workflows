@@ -7,6 +7,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="$ROOT/tests/.work"
 PASS=0
+cd "$ROOT"
 
 cleanup() {
     rm -rf "$WORK"
@@ -206,6 +207,7 @@ bundle_digest="$(
         sha256sum "$WORK/artifact/$name" | awk -v name="$name" '{print $1, name}'
     done | sha256sum | awk '{print $1}'
 )"
+artifact_relative="${WORK#"$ROOT"/}/artifact"
 TARGET_REPO=nanvix/zlib \
     UPDATE_KIND=nanvix \
     UPDATE_BRANCH=automation/update-nanvix-version \
@@ -213,7 +215,7 @@ TARGET_REPO=nanvix/zlib \
     PR_BODY="test update" \
     EXPECTED_BUNDLE_SHA256="$bundle_digest" \
     EXPECTED_PATCH_SHA256="$digest" \
-    ARTIFACT_DIR="$WORK/artifact" \
+    ARTIFACT_DIR="$artifact_relative" \
     GH_TOKEN=test \
     PUBLISH_CLONE_URL="$WORK/consumer" \
     PUBLISH_WORKDIR="$WORK/published" \
