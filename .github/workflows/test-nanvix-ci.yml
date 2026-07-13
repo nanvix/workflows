@@ -54,8 +54,6 @@ jobs:
       benchmark-args: ${{ inputs.benchmark-args }}
       benchmark-args-json: ${{ inputs.benchmark-args-json }}
       caller-event-name: ${{ github.event_name }}
-      # yamllint disable-line rule:line-length
-      docker-image: "ghcr.io/nanvix/nanvix-sdk-c-clang@sha256:880ed7e6a20fe9bf2536b1b3ba9bdbbd067a48f043ec9131d3dd398c65f11f35"
     secrets:
       GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
       DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}

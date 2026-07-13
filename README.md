@@ -41,19 +41,17 @@ The Nanvix updater accepts the `nanvix-sdk-released` dispatch contract from
 `nanvix/sdk`. It compares the payload with the authoritative GitHub Release
 `sdk-release.json` asset. Scheduled/manual runs read that same asset, so all
 events resolve an identical immutable tuple. Repeated dispatches are naturally
-idempotent. Until zutils v0.15.0 is released, override `ZUTILS_UPDATE_VERSION`
-or the manual `zutils-ref` / `tag` input with a command-capable source.
+idempotent. `ZUTILS_UPDATE_VERSION` pins the command implementation used by the
+SDK updater.
 
 The zutils updater resolves the latest stable GitHub Release unless a manual
 tag is supplied. It installs the release wheel and templates archive only after
 checking their GitHub-provided SHA-256 digests.
 
-## Reusable CI SDK mode
+## Reusable CI
 
-`.nanvix/nanvix.toml` and `.nanvix/nanvix.lock` are authoritative. The
-transitional `docker-image` input is optional; when an SDK caller supplies it,
-it must exactly match the manifest's immutable effective build image. Legacy
-manifests still require it.
+`.nanvix/nanvix.toml` and `.nanvix/nanvix.lock` are mandatory and authoritative.
+Legacy manifests and caller-supplied build images are rejected.
 
 SDK CI:
 
