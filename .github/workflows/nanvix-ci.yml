@@ -1019,6 +1019,7 @@ jobs:
       && (needs.benchmark.result == 'success' || needs.benchmark.result == 'skipped')
     runs-on: ubuntu-latest
     outputs:
+      release_published: ${{ steps.publish.outputs.release_published }}
       release_tag: ${{ steps.tag.outputs.release_tag }}
     env:
       NANVIX_ZUTIL_VERSION: ${{ needs.resolve-zutil-version.outputs.version }}
@@ -1100,6 +1101,7 @@ jobs:
             }' > sdk-provenance.json
 
       - name: Create release
+        id: publish
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
           RELEASE_TAG: ${{ steps.tag.outputs.release_tag }}
@@ -1149,11 +1151,21 @@ jobs:
               if ! gh release download "$RELEASE_TAG" \
                 --repo "${{ github.repository }}" \
                 --pattern sdk-provenance.json \
-                --dir existing-release ||
-                ! cmp -s sdk-provenance.json existing-release/sdk-provenance.json; then
-                echo "::error::Refusing to clobber $RELEASE_TAG from a different SDK build"
+                --dir existing-release; then
+                echo "::error::Existing SDK release has no provenance asset"
                 exit 1
               fi
+              jq -S 'del(.source_commit)' sdk-provenance.json \
+                > candidate-provenance.json
+              jq -S 'del(.source_commit)' existing-release/sdk-provenance.json \
+                > existing-provenance.json
+              if ! cmp -s candidate-provenance.json existing-provenance.json; then
+                echo "::error::Refusing to clobber $RELEASE_TAG from a different immutable SDK tuple"
+                exit 1
+              fi
+              echo "::notice::$RELEASE_TAG already exists; immutable assets were not replaced"
+              echo "release_published=false" >> "$GITHUB_OUTPUT"
+              exit 0
             fi
             gh release edit "$RELEASE_TAG" \
               --repo "${{ github.repository }}" \
@@ -1172,9 +1184,12 @@ jobs:
               --latest \
               "${assets[@]}"
           fi
+          echo "release_published=true" >> "$GITHUB_OUTPUT"
 
       - name: Trigger downstream workflows
-        if: ${{ success() && inputs.downstream-dispatches != '[]' }}
+        if: >-
+          steps.publish.outputs.release_published == 'true'
+          && inputs.downstream-dispatches != '[]'
         env:
           GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
           DISPATCHES: ${{ inputs.downstream-dispatches }}
@@ -1201,6 +1216,7 @@ jobs:
     if: >-
       !cancelled()
       && needs.release.result == 'success'
+      && needs.release.outputs.release_published == 'true'
       && inputs.windows-release
       && github.event_name != 'pull_request'
       && contains(fromJSON(inputs.process-modes), 'standalone')

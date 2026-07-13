@@ -319,4 +319,12 @@ grep -Fq 'UPDATE_TARGET=.git/sdk-release.json' \
     "$ROOT/.github/workflows/nanvix-update-nanvix.yml"
 ok "SDK contracts remain confined to each read-only consumer clone"
 
+grep -Fq "jq -S 'del(.source_commit)' sdk-provenance.json" \
+    "$ROOT/.github/workflows/nanvix-ci.yml"
+grep -Fq "release_published=false" \
+    "$ROOT/.github/workflows/nanvix-ci.yml"
+grep -Fq "needs.release.outputs.release_published == 'true'" \
+    "$ROOT/.github/workflows/nanvix-ci.yml"
+ok "existing SDK release tuples remain immutable and suppress redispatch"
+
 echo "1..$PASS"
