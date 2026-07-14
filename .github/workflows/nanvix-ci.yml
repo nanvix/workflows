@@ -1204,6 +1204,10 @@ jobs:
             --pattern "*-standalone-*.tar.gz" \
             --pattern "*-standalone-*.tar.bz2" \
             --dir release-download
+          # Exclude -dev archives (headers/libs for downstream builds);
+          # only end-user archives get repackaged for Windows.
+          # See https://github.com/nanvix/zutils/issues/287.
+          find release-download -maxdepth 1 -name '*-dev.tar.*' -delete
           ls -la release-download/
 
       - name: Download Nanvix Windows binaries
