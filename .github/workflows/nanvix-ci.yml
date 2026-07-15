@@ -571,8 +571,23 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
         run: nanvix-zutil test -- ${{ inputs.standalone-test-args }}
 
-      - name: Release
+      # Package the same staged artifacts twice: once labeled for
+      # linux consumption and once for windows.
+      # The build is a Linux Docker cross-compile with no host-dependent
+      # code paths today, so the staged bytes are identical; NANVIX_HOST
+      # only drives the archive name and extension. If a downstream ever
+      # introduces host-divergent build behavior, splitting this into
+      # separate runners is the next step.
+      - name: Release (linux)
         if: success()
+        env:
+          NANVIX_HOST: linux
+        run: nanvix-zutil release
+
+      - name: Release (windows)
+        if: success()
+        env:
+          NANVIX_HOST: windows
         run: nanvix-zutil release
 
       - name: Upload build artifacts
@@ -848,14 +863,7 @@ jobs:
   # Open a GitHub issue on any job failure
   # -------------------------------------------------------------------
   report-failure:
-    needs:
-      [
-        get-nanvix-info,
-        build,
-        benchmark,
-        release,
-        windows-test,
-      ]
+    needs: [get-nanvix-info, build, benchmark, release, windows-test]
     # Only report true failures (not cancellations from higher-priority runs).
     # The ci-passed gate intentionally still fails on cancelled for branch protection.
     if: >-
