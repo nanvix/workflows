@@ -64,15 +64,6 @@
       "derived_image": false
     },
     {
-      "repo": "nanvix/posix-tests",
-      "tier": 1,
-      "update_nanvix": true,
-      "update_zutils": true,
-      "toolchain": "nanvix-sdk",
-      "provider": "c-clang",
-      "derived_image": false
-    },
-    {
       "repo": "nanvix/xz",
       "tier": 1,
       "update_nanvix": true,
