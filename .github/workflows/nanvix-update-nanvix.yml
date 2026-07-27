@@ -243,6 +243,7 @@ jobs:
       always()
       && needs.prepare.outputs.tier == 'tier6'
       && needs.mutate.result == 'success'
+      && needs.mutate.outputs.failed == '[]'
       && needs.mutate.outputs.distro_candidate == 'true'
       && (needs.publish.result == 'success' || needs.publish.result == 'skipped')
     runs-on: ubuntu-latest
