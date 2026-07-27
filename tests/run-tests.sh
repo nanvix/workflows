@@ -319,6 +319,19 @@ grep -Fq 'UPDATE_TARGET=.git/sdk-release.json' \
     "$ROOT/.github/workflows/nanvix-update-nanvix.yml"
 ok "SDK contracts remain confined to each read-only consumer clone"
 
+nanvix_update="$ROOT/.github/workflows/nanvix-update-nanvix.yml"
+grep -Fq "distro_candidate: \${{ steps.mutate.outputs.distro_candidate }}" \
+    "$nanvix_update"
+grep -Fq "\"nanvix/nanvix-python\" && \"\$status\" =~ ^(updated|current)\$" \
+    "$nanvix_update"
+grep -Fq "needs.prepare.outputs.tier == 'tier6'" "$nanvix_update"
+grep -Fq "needs.mutate.outputs.distro_candidate == 'true'" "$nanvix_update"
+grep -Fq "needs.publish.result == 'success' || needs.publish.result == 'skipped'" \
+    "$nanvix_update"
+grep -Fq 'repos/nanvix/distro/dispatches' "$nanvix_update"
+grep -Fq "client_payload: {sdk_version: \$sdk_version}" "$nanvix_update"
+ok "ready final-tier updates dispatch the exact SDK to the distro"
+
 grep -Fq "jq -S 'del(.source_commit)' sdk-provenance.json" \
     "$ROOT/.github/workflows/nanvix-ci.yml"
 grep -Fq "release_published=false" \
