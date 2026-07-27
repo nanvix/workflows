@@ -328,7 +328,7 @@ grep -Fq "needs.prepare.outputs.tier == 'tier6'" "$nanvix_update"
 grep -Fq "needs.mutate.outputs.distro_candidate == 'true'" "$nanvix_update"
 grep -Fq "needs.publish.result == 'success' || needs.publish.result == 'skipped'" \
     "$nanvix_update"
-grep -Fq 'repos/nanvix/nanvix-distro/dispatches' "$nanvix_update"
+grep -Fq 'repos/nanvix/distro/dispatches' "$nanvix_update"
 grep -Fq "client_payload: {sdk_version: \$sdk_version}" "$nanvix_update"
 ok "ready final-tier updates dispatch the exact SDK to the distro"
 

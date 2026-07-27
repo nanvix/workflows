@@ -12,7 +12,7 @@ offsets. `tests/run-tests.sh` rejects drift between those tuples.
 
 The final Nanvix update tier contains `nanvix-python`. When that consumer is
 current or has a publishable update, the tier dispatches the exact verified SDK
-version to `nanvix-distro`. The distro independently preflights its complete
+version to `nanvix/distro`. The distro independently preflights its complete
 release set, so blocked final-tier updates do not advertise readiness and a
 premature candidate remains a safe deferred no-op.
 

@@ -255,7 +255,7 @@ jobs:
         run: |
           jq -n --arg sdk_version "$SDK_VERSION" \
             '{event_type: "distro-release-candidate", client_payload: {sdk_version: $sdk_version}}' |
-            gh api repos/nanvix/nanvix-distro/dispatches \
+            gh api repos/nanvix/distro/dispatches \
               --method POST \
               --input -
 
