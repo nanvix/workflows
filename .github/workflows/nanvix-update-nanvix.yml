@@ -81,6 +81,7 @@ jobs:
     outputs:
       artifact_paths: ${{ steps.mutate.outputs.artifact_paths }}
       bundle_digests: ${{ steps.mutate.outputs.bundle_digests }}
+      distro_candidate: ${{ steps.mutate.outputs.distro_candidate }}
       failed: ${{ steps.mutate.outputs.failed }}
       patch_digests: ${{ steps.mutate.outputs.patch_digests }}
       publication_repos: ${{ steps.mutate.outputs.publication_repos }}
@@ -115,6 +116,7 @@ jobs:
           paths='{}'
           publications='[]'
           failed='[]'
+          distro_candidate=false
 
           while IFS= read -r repo; do
             slug="${repo//\//--}"
@@ -162,6 +164,9 @@ jobs:
                   echo "::warning::$repo returned no mutation status"
                   ;;
               esac
+              if [[ "$repo" == "nanvix/nanvix-python" && "$status" =~ ^(updated|current)$ ]]; then
+                distro_candidate=true
+              fi
             else
               failed=$(jq -c --arg repo "$repo" '. + [$repo]' <<< "$failed")
               echo "::warning::Mutation failed for $repo"
@@ -175,6 +180,7 @@ jobs:
             echo "bundle_digests=$bundle_digests"
             echo "artifact_paths=$paths"
             echo "publication_repos=$publications"
+            echo "distro_candidate=$distro_candidate"
             echo "failed=$failed"
           } >> "$GITHUB_OUTPUT"
 
@@ -230,6 +236,27 @@ jobs:
     secrets:
       app-private-key: ${{ secrets.CONSUMER_UPDATE_APP_PRIVATE_KEY }}
       dispatch-token: ${{ secrets.DISPATCH_TOKEN }}
+
+  dispatch-distro:
+    needs: [prepare, mutate, publish]
+    if: >-
+      always()
+      && needs.prepare.outputs.tier == 'tier6'
+      && needs.mutate.result == 'success'
+      && needs.mutate.outputs.distro_candidate == 'true'
+      && (needs.publish.result == 'success' || needs.publish.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch coherent distro release candidate
+        env:
+          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+          SDK_VERSION: ${{ needs.prepare.outputs.sdk_version }}
+        run: |
+          jq -n --arg sdk_version "$SDK_VERSION" \
+            '{event_type: "distro-release-candidate", client_payload: {sdk_version: $sdk_version}}' |
+            gh api repos/nanvix/nanvix-distro/dispatches \
+              --method POST \
+              --input -
 
   report:
     needs: [mutate, publish]
