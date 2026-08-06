@@ -13,7 +13,7 @@ on:
       platforms:
         description: JSON array of target platforms.
         required: false
-        default: '["hyperlight","microvm"]'
+        default: '["microvm"]'
         type: string
       target-archs:
         description: JSON array of target architectures.
@@ -29,6 +29,11 @@ on:
         description: JSON array of memory configurations.
         required: false
         default: '["128mb"]'
+        type: string
+      hosts:
+        description: JSON array of target hosts.
+        required: false
+        default: '["linux", "windows"]'
         type: string
       matrix-exclude:
         description: >
@@ -491,15 +496,12 @@ jobs:
         process-mode: ${{ fromJSON(inputs.process-modes) }}
         memory: ${{ fromJSON(inputs.memory-sizes) }}
         exclude: ${{ fromJSON(inputs.matrix-exclude) }}
-    name: ${{ matrix.target-arch }}-${{ matrix.platform }}-${{ matrix.process-mode }}-${{ matrix.memory }}
+        host: ${{ fromJSON(inputs.hosts) }}
+    name: ${{matrix.host}}-${{ matrix.target-arch }}-${{ matrix.platform }}-${{ matrix.process-mode }}-${{ matrix.memory }}
     defaults:
       run:
         shell: bash
     env:
-      NANVIX_TARGET: ${{ matrix.target-arch }}
-      NANVIX_MACHINE: ${{ matrix.platform }}
-      NANVIX_DEPLOYMENT_MODE: ${{ matrix.process-mode }}
-      NANVIX_MEMORY_SIZE: ${{ matrix.memory }}
       NANVIX_VERSION: ${{ needs.get-nanvix-info.outputs.nanvix_tag }}
       NANVIX_DOCKER_IMAGE: ${{ needs.get-nanvix-info.outputs.build_image_ref }}
       NANVIX_SDK_C_ABI: ${{ needs.get-nanvix-info.outputs.sdk_c_abi }}
@@ -554,7 +556,13 @@ jobs:
       - name: Setup (with Docker)
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
-        run: nanvix-zutil setup --with-docker "$NANVIX_DOCKER_IMAGE"
+        run: nanvix-zutil setup \
+          --with-docker "$NANVIX_DOCKER_IMAGE" \
+          --target "${{ matrix.target-arch }}" \
+          --machine "${{ matrix.platform }}" \
+          --mode "${{ matrix.process-mode }}" \
+          --memory-size "${{ matrix.memory }}" \
+          --host "${{ matrix.host }}"
 
       - name: Build (in Docker)
         run: nanvix-zutil build
@@ -571,24 +579,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
         run: nanvix-zutil test -- ${{ inputs.standalone-test-args }}
 
-      # Package the same staged artifacts twice: once labeled for
-      # linux consumption and once for windows.
-      # The build is a Linux Docker cross-compile with no host-dependent
-      # code paths today, so the staged bytes are identical; NANVIX_HOST
-      # only drives the archive name and extension. If a downstream ever
-      # introduces host-divergent build behavior, splitting this into
-      # separate runners is the next step.
-      - name: Release (linux)
+      - name: Release
         if: success()
-        env:
-          NANVIX_HOST: linux
-        run: nanvix-zutil release
-
-      - name: Release (windows)
-        if: success()
-        env:
-          NANVIX_HOST: windows
-        run: nanvix-zutil release
+        run: |
+          nanvix-zutil release
 
       - name: Upload build artifacts
         if: success()
@@ -673,9 +667,6 @@ jobs:
         exclude: ${{ fromJSON(inputs.windows-matrix-exclude) }}
     name: windows-test (${{ matrix.platform }}-${{ matrix.memory }})
     env:
-      NANVIX_MACHINE: ${{ matrix.platform }}
-      NANVIX_DEPLOYMENT_MODE: standalone
-      NANVIX_MEMORY_SIZE: ${{ matrix.memory }}
       NANVIX_VERSION: ${{ needs.get-nanvix-info.outputs.nanvix_tag }}
       NANVIX_DOCKER_IMAGE: ${{ needs.get-nanvix-info.outputs.build_image_ref }}
       NANVIX_SDK_C_ABI: ${{ needs.get-nanvix-info.outputs.sdk_c_abi }}
@@ -703,7 +694,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
         shell: pwsh
-        run: nanvix-zutil setup --with-docker $env:NANVIX_DOCKER_IMAGE
+        run: nanvix-zutil setup `
+          --with-docker "$env:NANVIX_DOCKER_IMAGE" `
+          --target "${{ fromJSON(inputs.target-archs)[0] }}" `
+          --machine "${{ matrix.platform }}" `
+          --mode standalone `
+          --memory-size "${{ matrix.memory }}" `
+          --host windows
 
       - name: Download Linux build output
         if: ${{ !inputs.windows-build }}
@@ -776,10 +773,6 @@ jobs:
       run:
         shell: bash
     env:
-      NANVIX_TARGET: ${{ matrix.target-arch }}
-      NANVIX_MACHINE: ${{ matrix.platform }}
-      NANVIX_DEPLOYMENT_MODE: ${{ matrix.process-mode }}
-      NANVIX_MEMORY_SIZE: ${{ matrix.memory }}
       NANVIX_VERSION: ${{ needs.get-nanvix-info.outputs.nanvix_tag }}
       NANVIX_DOCKER_IMAGE: ${{ needs.get-nanvix-info.outputs.build_image_ref }}
       NANVIX_SDK_C_ABI: ${{ needs.get-nanvix-info.outputs.sdk_c_abi }}
@@ -813,7 +806,13 @@ jobs:
       - name: Setup (with Docker)
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
-        run: nanvix-zutil setup --with-docker "$NANVIX_DOCKER_IMAGE"
+        run: nanvix-zutil setup \
+          --with-docker "$NANVIX_DOCKER_IMAGE" \
+          --target "${{ matrix.target-arch }}" \
+          --machine "${{ matrix.platform }}" \
+          --mode "${{ matrix.process-mode }}" \
+          --memory-size "${{ matrix.memory }}" \
+          --host linux
 
       - name: Benchmark
         env:
