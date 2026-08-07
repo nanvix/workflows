@@ -589,7 +589,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ needs.get-nanvix-info.outputs.package_name }}-${{ needs.get-nanvix-info.outputs.package_version }}-${{ matrix.target-arch }}-${{ matrix.platform }}-${{ matrix.process-mode }}-${{ matrix.memory }}
+          name: ${{ needs.get-nanvix-info.outputs.package_name }}-${{ needs.get-nanvix-info.outputs.package_version }}-${{ matrix.host }}-${{ matrix.target-arch }}-${{ matrix.platform }}-${{ matrix.process-mode }}-${{ matrix.memory }}
           path: |
             ${{inputs.dist-path}}/*.tar.bz2
             ${{inputs.dist-path}}/*.tar.gz
