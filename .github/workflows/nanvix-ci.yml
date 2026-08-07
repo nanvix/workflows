@@ -556,13 +556,14 @@ jobs:
       - name: Setup (with Docker)
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
-        run: nanvix-zutil setup \
-          --with-docker "$NANVIX_DOCKER_IMAGE" \
-          --target "${{ matrix.target-arch }}" \
-          --machine "${{ matrix.platform }}" \
-          --mode "${{ matrix.process-mode }}" \
-          --memory-size "${{ matrix.memory }}" \
-          --host "${{ matrix.host }}"
+        run: |
+          nanvix-zutil setup \
+            --with-docker "$NANVIX_DOCKER_IMAGE" \
+            --target "${{ matrix.target-arch }}" \
+            --machine "${{ matrix.platform }}" \
+            --mode "${{ matrix.process-mode }}" \
+            --memory-size "${{ matrix.memory }}" \
+            --host "${{ matrix.host }}"
 
       - name: Build (in Docker)
         run: nanvix-zutil build
@@ -694,13 +695,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
         shell: pwsh
-        run: nanvix-zutil setup `
-          --with-docker "$env:NANVIX_DOCKER_IMAGE" `
-          --target "${{ fromJSON(inputs.target-archs)[0] }}" `
-          --machine "${{ matrix.platform }}" `
-          --mode standalone `
-          --memory-size "${{ matrix.memory }}" `
-          --host windows
+        run: |
+          nanvix-zutil setup `
+            --with-docker "$env:NANVIX_DOCKER_IMAGE" `
+            --target "${{ fromJSON(inputs.target-archs)[0] }}" `
+            --machine "${{ matrix.platform }}" `
+            --mode standalone `
+            --memory-size "${{ matrix.memory }}" `
+            --host windows
 
       - name: Download Linux build output
         if: ${{ !inputs.windows-build }}
@@ -806,13 +808,14 @@ jobs:
       - name: Setup (with Docker)
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
-        run: nanvix-zutil setup \
-          --with-docker "$NANVIX_DOCKER_IMAGE" \
-          --target "${{ matrix.target-arch }}" \
-          --machine "${{ matrix.platform }}" \
-          --mode "${{ matrix.process-mode }}" \
-          --memory-size "${{ matrix.memory }}" \
-          --host linux
+        run: |
+          nanvix-zutil setup \
+            --with-docker "$NANVIX_DOCKER_IMAGE" \
+            --target "${{ matrix.target-arch }}" \
+            --machine "${{ matrix.platform }}" \
+            --mode "${{ matrix.process-mode }}" \
+            --memory-size "${{ matrix.memory }}" \
+            --host linux
 
       - name: Benchmark
         env:
