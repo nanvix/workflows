@@ -1376,6 +1376,30 @@ jobs:
           fi
 
           echo "Merging automation PR #$PR_NUMBER on $REPO..."
-          gh pr merge "$PR_NUMBER" --repo "$REPO" --merge --admin --delete-branch || {
-            echo "::warning::Auto-merge failed for PR #$PR_NUMBER"
-          }
+
+          ATTEMPTS=3
+          n=1
+          MERGE_ERR="$(mktemp)"
+          while [ "$n" -le "$ATTEMPTS" ]; do
+            gh pr merge "$PR_NUMBER" --repo "$REPO" --merge --admin --delete-branch \
+              || echo "::warning::Auto-merge attempt $n/$ATTEMPTS failed for PR #$PR_NUMBER"
+
+            # Confirm from server state. Keep stdout clean for the comparison; a
+            # read failure (auth/API outage) is surfaced with its cause but
+            # still tolerated, so it stays distinguishable from "not merged".
+            if MERGED=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json merged --jq '.merged' 2>"$MERGE_ERR"); then
+              if [ "$MERGED" = "true" ]; then
+                echo "PR #$PR_NUMBER merged."
+                exit 0
+              fi
+            else
+              echo "::warning::Could not read merge state for PR #$PR_NUMBER: $(cat "$MERGE_ERR")"
+            fi
+
+            # Back off using the attempt that just failed (5s, then 10s).
+            [ "$n" -lt "$ATTEMPTS" ] && sleep $((n * 5))
+            n=$((n + 1))
+          done
+
+          echo "::error::PR #$PR_NUMBER did not merge after $ATTEMPTS attempts"
+          exit 1
