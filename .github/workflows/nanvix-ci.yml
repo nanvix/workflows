@@ -534,7 +534,7 @@ jobs:
 
       - name: Log in to GHCR
         if: startsWith(needs.get-nanvix-info.outputs.build_image_ref, 'ghcr.io/')
-        uses: docker/login-action@v4.6.0
+        uses: docker/login-action@v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -720,7 +720,7 @@ jobs:
 
       - name: Log in to GHCR
         if: inputs.windows-build && startsWith(needs.get-nanvix-info.outputs.build_image_ref, 'ghcr.io/')
-        uses: docker/login-action@v4.6.0
+        uses: docker/login-action@v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -799,7 +799,7 @@ jobs:
 
       - name: Log in to GHCR
         if: startsWith(needs.get-nanvix-info.outputs.build_image_ref, 'ghcr.io/')
-        uses: docker/login-action@v4.6.0
+        uses: docker/login-action@v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
